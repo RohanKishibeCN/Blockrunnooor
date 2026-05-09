@@ -8,6 +8,7 @@ from ..config import Settings
 from ..logging import configure_logging, get_logger, log_event
 from ..models import ExecutorInput, ExecutorOutput
 from ..router.blockrun import BlockRunClient
+from ..wallet_store import load_wallet_manifest
 
 
 def _read_stdin_json() -> dict:
@@ -18,14 +19,15 @@ def _read_stdin_json() -> dict:
 
 
 def main() -> int:
-    configure_logging()
     logger = get_logger("executor")
 
     try:
         settings = Settings()
     except Exception as e:
+        configure_logging()
         log_event(logger, logging.ERROR, "settings_error", error=str(e)[:200])
         return 2
+    configure_logging(settings.brnoo_log_level)
 
     try:
         payload = _read_stdin_json()
@@ -34,13 +36,20 @@ def main() -> int:
         log_event(logger, logging.ERROR, "input_error", error=str(e)[:200])
         return 2
 
+    wallet_key = settings.blockrun_wallet_key
+    if settings.brnoo_wallets_manifest_path:
+        manifest = load_wallet_manifest(settings.brnoo_wallets_manifest_path)
+        rec = manifest.get(inp.wallet_id)
+        if rec:
+            wallet_key = rec.private_key
+
     client = BlockRunClient(
-        base_url=settings.blockrun_base_url,
-        auth_token=settings.blockrun_auth_token,
+        api_url=settings.blockrun_api_url,
+        wallet_key=wallet_key,
         timeout_seconds=settings.blockrun_timeout_seconds,
     )
 
-    path = inp.blockrun_path or settings.blockrun_default_path
+    path = inp.blockrun_path or settings.blockrun_chat_path
     resp = client.call(path=path, payload=inp.blockrun_json)
 
     if resp.ok:
@@ -86,4 +95,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

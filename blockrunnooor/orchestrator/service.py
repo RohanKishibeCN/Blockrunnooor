@@ -13,9 +13,11 @@ from ..logging import get_logger, log_event
 from ..models import ExecutorInput, ExecutorOutput, NotionRunRecord, ScheduleType
 from ..notion.client import backoff_seconds
 from ..notion.recorder import NotionRecorder, log_notion_result
+from ..prompt_bank import PromptItem, load_prompt_bank, pick_random_prompt
 from ..router.decision import decide
 from ..scheduler.utils import compute_backoff, make_run_id, now_epoch, pick_jitter, scheduled_bucket
 from ..state.db import StateDB
+from ..wallet_store import load_wallet_manifest
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class TaskSpec:
     jitter_seconds: int
     attempt: int
     backoff_seconds: int
+    prompt: PromptItem | None = None
 
 
 class Orchestrator:
@@ -39,8 +42,17 @@ class Orchestrator:
         self._wallet_locks: dict[str, asyncio.Semaphore] = {}
         self._wallet_failures: dict[str, int] = {}
         self._running = True
+        self._prompt_bank: list[PromptItem] = []
 
-        for wid in settings.wallet_id_list():
+        wallet_ids = settings.wallet_id_list()
+        if settings.brnoo_wallets_manifest_path:
+            manifest = load_wallet_manifest(settings.brnoo_wallets_manifest_path)
+            wallet_ids = sorted(manifest.keys())
+
+        if settings.brnoo_prompts_file:
+            self._prompt_bank = load_prompt_bank(settings.brnoo_prompts_file)
+
+        for wid in wallet_ids:
             self._db.ensure_wallet(wid, settings.brnoo_default_daily_budget_usd, settings.brnoo_default_max_cost_per_run_usd)
 
         self._notion: NotionRecorder | None = None
@@ -78,7 +90,9 @@ class Orchestrator:
                 self._db.refresh_daily_spent_if_needed(w.wallet_id)
 
             for wallet in wallets:
-                for task_type in self._s.task_type_list():
+                if self._prompt_bank:
+                    prompt = pick_random_prompt(self._prompt_bank)
+                    task_type = prompt.prompt_id
                     jitter = pick_jitter(self._s.brnoo_jitter_max_seconds)
                     scheduled_at = tick_start + jitter
                     spec = TaskSpec(
@@ -89,8 +103,24 @@ class Orchestrator:
                         jitter_seconds=jitter,
                         attempt=1,
                         backoff_seconds=0,
+                        prompt=prompt,
                     )
                     asyncio.create_task(self._delayed_run(spec))
+                else:
+                    for task_type in self._s.task_type_list():
+                        jitter = pick_jitter(self._s.brnoo_jitter_max_seconds)
+                        scheduled_at = tick_start + jitter
+                        spec = TaskSpec(
+                            wallet_id=wallet.wallet_id,
+                            task_type=task_type,
+                            schedule_type="cron",
+                            scheduled_at=scheduled_at,
+                            jitter_seconds=jitter,
+                            attempt=1,
+                            backoff_seconds=0,
+                            prompt=None,
+                        )
+                        asyncio.create_task(self._delayed_run(spec))
 
             elapsed = now_epoch() - tick_start
             sleep_for = max(0, self._s.brnoo_base_interval_seconds - elapsed)
@@ -110,11 +140,11 @@ class Orchestrator:
 
         circuit = self._db.get_circuit("blockrun")
         dec = decide(wallet, circuit, now)
-        bucket = scheduled_bucket(spec.scheduled_at, self._s.brnoo_base_interval_seconds)
+        bucket = scheduled_bucket(spec.scheduled_at, self._s.brnoo_bucket_seconds)
         run_id = make_run_id(spec.wallet_id, spec.task_type, bucket, self._s.brnoo_run_id_salt)
 
         idx = self._db.get_run_index(spec.wallet_id, spec.task_type, bucket)
-        attempt = idx["attempt"] + 1 if idx and idx.get("run_id") == run_id and spec.schedule_type == "retry" else spec.attempt
+        attempt = idx["attempt"] + 1 if idx and spec.schedule_type == "retry" else spec.attempt
 
         if dec.decision == "deny":
             out = ExecutorOutput(
@@ -141,6 +171,15 @@ class Orchestrator:
 
         async with self._global_sem, self._wallet_sem(spec.wallet_id):
             self._db.upsert_run_index(run_id, spec.wallet_id, spec.task_type, bucket, attempt, idx.get("notion_page_id") if idx else None)
+            blockrun_json: dict[str, Any] = {"wallet_id": spec.wallet_id, "task_type": spec.task_type}
+            blockrun_path: str | None = None
+            if spec.prompt:
+                blockrun_path = self._s.blockrun_chat_path
+                blockrun_json = {"model": spec.prompt.model, "messages": spec.prompt.messages}
+                if spec.prompt.temperature is not None:
+                    blockrun_json["temperature"] = spec.prompt.temperature
+                if spec.prompt.max_tokens is not None:
+                    blockrun_json["max_tokens"] = spec.prompt.max_tokens
             out = await self._spawn_executor(
                 ExecutorInput(
                     wallet_id=spec.wallet_id,
@@ -150,8 +189,8 @@ class Orchestrator:
                     schedule_type=spec.schedule_type,
                     jitter_seconds=spec.jitter_seconds,
                     backoff_seconds=spec.backoff_seconds,
-                    blockrun_path=None,
-                    blockrun_json={"wallet_id": spec.wallet_id, "task_type": spec.task_type},
+                    blockrun_path=blockrun_path,
+                    blockrun_json=blockrun_json,
                 )
             )
             await self._record_and_update(spec, out, bucket)
@@ -168,11 +207,11 @@ class Orchestrator:
             circuit_state = self._db.get_circuit("blockrun")
             self._db.update_circuit("blockrun", failure_count=circuit_state.failure_count + 1, open_until=circuit_state.open_until)
 
-            if failures >= 3:
+            if failures >= self._s.brnoo_wallet_failure_threshold:
                 self._db.set_cooldown(spec.wallet_id, now + self._s.brnoo_wallet_cooldown_seconds)
 
-            if circuit_state.failure_count + 1 >= 5:
-                self._db.update_circuit("blockrun", failure_count=0, open_until=now + 300)
+            if circuit_state.failure_count + 1 >= self._s.brnoo_circuit_failure_threshold:
+                self._db.update_circuit("blockrun", failure_count=0, open_until=now + self._s.brnoo_circuit_open_seconds)
 
             if attempt < self._s.brnoo_max_attempts and out.error_type in ("network", "upstream", "rate_limit"):
                 bo = compute_backoff(self._s.brnoo_backoff_base_seconds, attempt, self._s.brnoo_backoff_max_seconds)
@@ -184,6 +223,7 @@ class Orchestrator:
                     jitter_seconds=0,
                     attempt=attempt + 1,
                     backoff_seconds=bo,
+                    prompt=spec.prompt,
                 )
                 asyncio.create_task(self._delayed_run(retry_spec))
 
@@ -315,7 +355,7 @@ class Orchestrator:
             now = now_epoch()
             items = self._db.pop_due_outbox(now)
             if not items:
-                await asyncio.sleep(5)
+                await asyncio.sleep(self._s.brnoo_outbox_poll_seconds)
                 continue
 
             for item in items:

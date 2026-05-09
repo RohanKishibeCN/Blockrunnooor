@@ -9,14 +9,15 @@ from .service import Orchestrator
 
 
 def main() -> int:
-    configure_logging()
     logger = get_logger("orchestrator_main")
     try:
         settings = Settings()
     except Exception as e:
+        configure_logging()
         log_event(logger, logging.ERROR, "settings_error", error=str(e)[:200])
         return 2
 
+    configure_logging(settings.brnoo_log_level)
     orch = Orchestrator(settings)
     asyncio.run(orch.run_forever())
     return 0
@@ -24,4 +25,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -26,16 +26,16 @@ class BlockRunResponse:
 
 
 class BlockRunClient:
-    def __init__(self, base_url: str, auth_token: str | None, timeout_seconds: int):
-        self._base_url = base_url.rstrip("/")
-        self._auth_token = auth_token
+    def __init__(self, api_url: str, wallet_key: str | None, timeout_seconds: int):
+        self._base_url = api_url.rstrip("/")
+        self._wallet_key = wallet_key
         self._timeout = timeout_seconds
 
     def call(self, path: str, payload: dict[str, Any]) -> BlockRunResponse:
         url = f"{self._base_url}{path}"
         headers = {"Content-Type": "application/json"}
-        if self._auth_token:
-            headers["Authorization"] = f"Bearer {self._auth_token}"
+        if self._wallet_key:
+            headers["Authorization"] = f"Bearer {self._wallet_key}"
 
         start = time.time()
         try:
@@ -139,4 +139,3 @@ class BlockRunClient:
             input_tokens=None,
             output_tokens=None,
         )
-
