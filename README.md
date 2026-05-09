@@ -1,1 +1,27 @@
 # Blockrunnooor
+
+面向 VPS 的“常驻编排器（orchestrator）+ 可触发任务（jobs）”方案文档集合：用于在同一台机器上以 1 个常驻服务管理 100 个钱包的任务执行，并将每次运行（run）的结果与成本写入 Notion。
+
+重要澄清：BlockRun 是“网关 + x402 支付协议”相关能力；本仓库讨论的是本地编排器/客户端如何调用 BlockRun，并不自建 BlockRun 后端。
+
+## 快速开始（文档优先）
+1. 先阅读概览：docs/00-overview.md
+2. 按安全策略准备密钥与权限：docs/02-security.md
+3. 按调度策略设置并发/抖动/重试：docs/03-scheduling.md
+4. 按路由策略接入 BlockRun + 自有 Kimi K2.6 兜底：docs/04-routing.md
+5. 配置 Notion 表并实现幂等写入：docs/05-notion-schema.md
+6. 用 systemd 部署为常驻服务：docs/06-deployment-systemd.md
+
+## 文档导航
+- 概览：docs/00-overview.md
+- 架构：docs/01-architecture.md
+- 安全：docs/02-security.md
+- 调度：docs/03-scheduling.md
+- 路由（BlockRun + 自有 Kimi 兜底）：docs/04-routing.md
+- Notion 表结构：docs/05-notion-schema.md
+- 部署（systemd）：docs/06-deployment-systemd.md
+- 运维与 FAQ：docs/07-ops-faq.md
+
+## 配置示例
+- 环境变量示例：.env.example
+- 建议：本地实际 .env 不提交；密钥目录不提交；日志脱敏
