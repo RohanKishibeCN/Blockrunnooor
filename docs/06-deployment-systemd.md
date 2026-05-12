@@ -1,6 +1,8 @@
-# 部署（systemd）
+# 部署（pm2 / systemd）
 
-说明：此处给出部署骨架。你需要把 ExecStart 指向你的实际 orchestrator 可执行文件/脚本。
+推荐：优先使用 pm2 部署 Node.js / TypeScript 版本，见 `docs/06-deployment-pm2.md`。
+
+说明：本文件保留 systemd 部署骨架，适用于需要由 systemd 接管的环境。你需要把 ExecStart 指向你的实际 orchestrator 可执行文件/脚本。
 
 ## 目录建议
 - 配置：`/etc/blockrunnooor/`

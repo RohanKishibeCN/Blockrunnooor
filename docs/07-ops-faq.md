@@ -21,7 +21,7 @@
 Runs 仍应保证幂等；建议本地队列/重试，或先落本地状态再补写。
 
 ### 如何防止日志泄漏密钥？
-禁止输出私钥/助记词/签名原文；所有错误信息脱敏；启用 systemd 权限加固；仓库忽略 .env 与 secrets。
+禁止输出私钥/助记词/签名原文；所有错误信息脱敏；通过 pm2 / systemd 做最小权限与日志访问控制；仓库忽略 .env 与 secrets。
 
 ### BlockRun 不可用时如何兜底？
 Router 触发 fallback 到自有 Kimi K2.6，同时记录 decision/channel/model/cost/error，保证统计口径一致。
