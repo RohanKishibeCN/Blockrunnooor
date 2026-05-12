@@ -14,6 +14,11 @@
 - Notion 记录：Runs 为核心事实表；可选 Wallets/Errors；幂等键去重避免重试重复计数
 - 部署运维：pm2 常驻；可观察性（日志/指标）；可回滚升级
 
+## 进一步阅读
+- 多账号（共享 Notion Runs）：docs/09-multi-account.md
+- 配置参考：docs/10-config-reference.md
+- SQLite 初始化与迁移：docs/11-sqlite-migrations.md
+
 ## 术语
 - account：账号/业务分组（共享同一个 Notion Runs 表，但用 account_id 区分）
 - account_id：账号唯一标识（写入 Notion Runs；同时作为 SQLite 分区键）

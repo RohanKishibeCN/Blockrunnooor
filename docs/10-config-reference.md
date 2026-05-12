@@ -1,0 +1,85 @@
+# 配置参考（Node.js / TypeScript）
+
+本文给出环境变量与配置文件的完整清单，以及优先级规则。
+
+## 1. 优先级规则
+
+从高到低：
+1. 账号配置文件（`BRNOO_ACCOUNTS_DIR/*.json`）中的字段
+2. 环境变量（process.env）
+3. 代码默认值
+
+说明：
+- Notion（B 模式）为全局配置：账号配置文件不应包含 Notion token/database 字段
+- 账号配置文件只管理该账号的钱包集合与默认预算等“账号域”信息
+
+## 2. 全局环境变量（必填）
+
+- `BRNOO_STATE_DB_PATH`
+  - SQLite 路径，例如 `/var/lib/blockrunnooor/state/state.db`
+- `BRNOO_ACCOUNTS_DIR`
+  - 账号配置目录，例如 `/etc/blockrunnooor/accounts`
+- `BRNOO_RUN_ID_SALT`
+  - 生成 run_id 的盐（不要泄漏）
+- `BLOCKRUN_API_URL`
+  - 例如 `https://blockrun.ai/api`
+- `BLOCKRUN_CHAT_PATH`
+  - 例如 `/v1/chat/completions`
+- `BLOCKRUN_TIMEOUT_SECONDS`
+  - 例如 `30`
+
+## 3. 全局环境变量（可选）
+
+调度：
+- `BRNOO_BASE_INTERVAL_SECONDS`
+- `BRNOO_JITTER_MAX_SECONDS`
+- `BRNOO_BUCKET_SECONDS`
+
+并发：
+- `BRNOO_GLOBAL_MAX_CONCURRENCY`
+- `BRNOO_PER_ACCOUNT_MAX_CONCURRENCY`
+- `BRNOO_PER_WALLET_MAX_CONCURRENCY`
+
+重试：
+- `BRNOO_MAX_ATTEMPTS`
+- `BRNOO_BACKOFF_BASE_SECONDS`
+- `BRNOO_BACKOFF_MAX_SECONDS`
+
+冷却/熔断：
+- `BRNOO_WALLET_FAILURE_THRESHOLD`
+- `BRNOO_WALLET_COOLDOWN_SECONDS`
+- `BRNOO_CIRCUIT_FAILURE_THRESHOLD`
+- `BRNOO_CIRCUIT_OPEN_SECONDS`
+
+Notion（可选）：
+- `NOTION_TOKEN`
+- `NOTION_RUNS_DATABASE_ID`
+- `NOTION_TIMEOUT_SECONDS`
+
+日志：
+- `BRNOO_LOG_LEVEL`
+
+## 4. 账号配置字段（`accounts/*.json`）
+
+必填：
+- `account_id`
+- `wallets_manifest_path`
+
+常用可选：
+- `display_name`
+- `prompts_file`
+- `default_daily_budget_usd`
+- `default_max_cost_per_run_usd`
+- `status`：`active` / `paused`
+- `tags`
+
+## 5. 建议的 pm2 注入方式
+
+推荐把全局 env 放进 pm2 ecosystem 配置：
+- `BRNOO_STATE_DB_PATH`
+- `BRNOO_ACCOUNTS_DIR`
+- `BRNOO_RUN_ID_SALT`
+- `BLOCKRUN_API_URL` / `BLOCKRUN_CHAT_PATH` / `BLOCKRUN_TIMEOUT_SECONDS`
+- Notion（如启用）：`NOTION_TOKEN` / `NOTION_RUNS_DATABASE_ID`
+
+账号差异通过 `accounts/*.json` 提供，不通过 pm2 env 做 N 套变量。
