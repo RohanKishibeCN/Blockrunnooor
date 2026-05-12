@@ -19,6 +19,9 @@
 - 调度：docs/03-scheduling.md
 - 路由（BlockRun + 自有 Kimi 兜底）：docs/04-routing.md
 - Notion 表结构：docs/05-notion-schema.md
+- 多账号（共享 Notion Runs）：docs/09-multi-account.md
+- 配置参考：docs/10-config-reference.md
+- SQLite 迁移：docs/11-sqlite-migrations.md
 - 部署（pm2）：docs/06-deployment-pm2.md
 - 部署（systemd，可选）：docs/06-deployment-systemd.md
 - 运维与 FAQ：docs/07-ops-faq.md
