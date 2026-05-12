@@ -31,6 +31,7 @@ export class Orchestrator {
   private readonly accountSems = new Map<string, Semaphore>()
   private readonly walletSems = new Map<string, Semaphore>()
   private readonly walletFailures = new Map<string, number>()
+  private readonly walletKeys = new Map<string, string>()
 
   private readonly notion: NotionRecorder | null
 
@@ -110,6 +111,9 @@ export class Orchestrator {
         for (const [walletId, rec] of walletManifest.entries()) {
           this.repo.ensureWallet(account.account_id, walletId, dailyBudget, maxCostPerRun, day)
           this.repo.updateWalletIdentity(account.account_id, walletId, rec.address, rec.secret_ref)
+          if (rec.private_key) {
+            this.walletKeys.set(`${account.account_id}:${walletId}`, rec.private_key)
+          }
 
           if (!promptBank || !promptBank.length) continue
 
@@ -236,6 +240,9 @@ export class Orchestrator {
   private resolveWalletKey(accountId: string, walletId: string): string | null {
     const envKey = this.env.BLOCKRUN_WALLET_KEY
     if (envKey) return envKey
+
+    const memKey = this.walletKeys.get(`${accountId}:${walletId}`)
+    if (memKey) return memKey
 
     const wallet = this.repo.getWallet(accountId, walletId)
     if (!wallet) return null
