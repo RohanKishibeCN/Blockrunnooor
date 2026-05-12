@@ -23,7 +23,11 @@
 - 建议专用用户：`blockrun`
 - 目录权限：
   - secrets：`chmod 700`，文件 `chmod 600`，owner 为 `blockrun`
-  - 日志：仅运维组可读（或通过 journald 控制）
+  - 日志：仅运维组可读（或通过 pm2 / systemd 日志访问控制）
+
+## 多账号（共享 Notion Runs）
+- 多账号模式下建议把 `account_id` 作为强制字段写入 Runs，并在运维侧以 Notion 视图/过滤器隔离不同账号
+- 不要把 Notion token 写入 SQLite；建议仅通过环境变量或受控文件读取
 
 ## 备份与轮换
 - 备份：仅备份加密后的 secrets；备份介质同样需要访问控制

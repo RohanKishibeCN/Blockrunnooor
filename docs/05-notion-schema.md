@@ -4,8 +4,9 @@
 用途：每次 run 一行（成功/失败都写），用于统计成功率、成本、耗时、渠道分布。
 
 建议字段（属性名 -> 类型 -> 说明）：
-- run_id -> Title(文本) -> 幂等键（建议：hash(wallet_id + task_type + scheduled_time_bucket + nonce)）
+- run_id -> Title(文本) -> 幂等键（建议：hash(account_id + wallet_id + task_type + scheduled_time_bucket + salt)）
 - created_at -> Date -> 运行开始时间
+- account_id -> Select/文本 -> 账号/业务分组（同一个 Runs 表承载多个账号时必填）
 - wallet_id -> Select/文本 -> 钱包标识（不要写私钥/助记词）
 - wallet_address -> 文本 -> 可选；建议脱敏或只存后缀
 - task_type -> Select -> 任务类型
@@ -42,7 +43,7 @@
 - raw（严格脱敏后的结构化 JSON 字符串）
 
 ## 幂等与去重（必须）
-- Runs 的 run_id 必须稳定可复算：同一任务同一 bucket 的重试应写同一 run_id，并通过 attempt 字段区分
+- Runs 的 run_id 必须稳定可复算：同一账号、同一钱包、同一任务、同一 bucket 的重试应写同一 run_id，并通过 attempt 字段区分
 - 若实现难以更新同一行：
   - 允许多行，但增加 idempotency_key 字段，并在统计时去重
   - 或先落本地状态（SQLite/文件）再补写 Notion
