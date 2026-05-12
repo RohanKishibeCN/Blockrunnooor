@@ -1,0 +1,26 @@
+{
+  "name": "blockrunnooor",
+  "version": "0.2.0",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "node --watch --enable-source-maps dist/index.js",
+    "generate-wallets": "node dist/tools/generate-wallets.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "ethers": "^6.13.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.17.57",
+    "typescript": "^5.8.3"
+  }
+}
