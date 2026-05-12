@@ -5,8 +5,8 @@
 ## 1. 优先级规则
 
 从高到低：
-1. 账号配置文件（`BRNOO_ACCOUNTS_DIR/*.json`）中的字段
-2. 环境变量（process.env）
+1. `.env` / `BRNOO_ENV_FILE` 加载后的环境变量（process.env）
+2. 账号配置（`BRNOO_ACCOUNTS_JSON` 或 `BRNOO_ACCOUNTS_DIR/*.json`）
 3. 代码默认值
 
 说明：
@@ -15,10 +15,14 @@
 
 ## 2. 全局环境变量（必填）
 
+- `BRNOO_ENV_FILE`
+  - 可选；env 文件路径，例如 `/etc/blockrunnooor/blockrunnooor.env`
 - `BRNOO_STATE_DB_PATH`
   - SQLite 路径，例如 `/var/lib/blockrunnooor/state/state.db`
-- `BRNOO_ACCOUNTS_DIR`
-  - 账号配置目录，例如 `/etc/blockrunnooor/accounts`
+- `BRNOO_ACCOUNTS_DIR` 或 `BRNOO_ACCOUNTS_JSON`
+  - 二选一
+  - `BRNOO_ACCOUNTS_DIR`：账号配置目录，例如 `/etc/blockrunnooor/accounts`
+  - `BRNOO_ACCOUNTS_JSON`：JSON 数组字符串（单行），用于把账号配置也集中到 env 文件里
 - `BRNOO_RUN_ID_SALT`
   - 生成 run_id 的盐（不要泄漏）
 - `BLOCKRUN_API_URL`

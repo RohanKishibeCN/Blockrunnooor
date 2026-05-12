@@ -105,22 +105,69 @@ chmod 600 /etc/blockrunnooor/prompts.default.jsonl
 
 ## 6. 环境变量配置（全部可调参入口）
 
-### 6.1 全局必填项（最小可跑）
-- `BRNOO_RUN_ID_SALT`：随机字符串
-- `BRNOO_STATE_DB_PATH=/var/lib/blockrunnooor/state/state.db`
-- `BRNOO_ACCOUNTS_DIR=/etc/blockrunnooor/accounts`
-- `BLOCKRUN_API_URL=https://blockrun.ai/api`
-- `BLOCKRUN_TIMEOUT_SECONDS=30`
-- `BLOCKRUN_CHAT_PATH=/v1/chat/completions`
+### 6.1 创建 env 文件（推荐：统一写到一个文件）
+```bash
+mkdir -p /etc/blockrunnooor
+cp /opt/blockrunnooor/.env.example /etc/blockrunnooor/blockrunnooor.env
+chmod 600 /etc/blockrunnooor/blockrunnooor.env
+```
 
-### 6.2 全局可选项（建议按需配置）
-- 调度：`BRNOO_BASE_INTERVAL_SECONDS`、`BRNOO_JITTER_MAX_SECONDS`
-- 并发：`BRNOO_GLOBAL_MAX_CONCURRENCY`、`BRNOO_PER_ACCOUNT_MAX_CONCURRENCY`、`BRNOO_PER_WALLET_MAX_CONCURRENCY`
-- 幂等桶：`BRNOO_BUCKET_SECONDS`
-- 重试：`BRNOO_MAX_ATTEMPTS`、`BRNOO_BACKOFF_BASE_SECONDS`、`BRNOO_BACKOFF_MAX_SECONDS`
-- 冷却/熔断：`BRNOO_WALLET_FAILURE_THRESHOLD`、`BRNOO_WALLET_COOLDOWN_SECONDS`、`BRNOO_CIRCUIT_FAILURE_THRESHOLD`、`BRNOO_CIRCUIT_OPEN_SECONDS`
-- outbox：`BRNOO_OUTBOX_POLL_SECONDS`
-- Notion（可选）：`NOTION_TOKEN`、`NOTION_RUNS_DATABASE_ID`、`NOTION_TIMEOUT_SECONDS`
+编辑：
+```bash
+nano /etc/blockrunnooor/blockrunnooor.env
+```
+
+说明：
+- orchestrator 启动时会自动读取 `.env`（工作目录下）或 `BRNOO_ENV_FILE` 指向的 env 文件
+- 推荐用 pm2 在 `ecosystem.config.cjs` 里只配置 `BRNOO_ENV_FILE=/etc/blockrunnooor/blockrunnooor.env`，其余参数都写在这个 env 文件中
+
+### 6.2 参数清单与说明（全部在 env 文件中配置）
+
+核心：
+- `BRNOO_RUN_ID_SALT`：必填，run_id 计算盐；改动会导致 run_id 全部变化
+- `BRNOO_STATE_DB_PATH`：必填，SQLite 文件路径
+- `BRNOO_ACCOUNTS_DIR`：账号配置目录（与 `BRNOO_ACCOUNTS_JSON` 二选一）
+- `BRNOO_ACCOUNTS_JSON`：账号配置 JSON 数组字符串（与 `BRNOO_ACCOUNTS_DIR` 二选一）
+
+BlockRun：
+- `BLOCKRUN_API_URL`：必填，例如 `https://blockrun.ai/api`
+- `BLOCKRUN_CHAT_PATH`：必填，例如 `/v1/chat/completions`
+- `BLOCKRUN_TIMEOUT_SECONDS`：可选，默认 30
+- `BLOCKRUN_WALLET_KEY`：可选，全局 wallet key（不推荐用于多钱包；多钱包建议在 manifest 写 `private_key` 或 `secret_ref`）
+
+调度：
+- `BRNOO_BASE_INTERVAL_SECONDS`：可选，每轮调度间隔（默认 60）
+- `BRNOO_JITTER_MAX_SECONDS`：可选，每轮触发抖动（默认 10）
+- `BRNOO_BUCKET_SECONDS`：可选，幂等桶大小（默认 60）；同一 bucket 重试复用同一 run_id
+
+并发：
+- `BRNOO_GLOBAL_MAX_CONCURRENCY`：可选，全局并发上限
+- `BRNOO_PER_ACCOUNT_MAX_CONCURRENCY`：可选，单账号并发上限
+- `BRNOO_PER_WALLET_MAX_CONCURRENCY`：可选，单钱包并发上限（通常 1）
+
+重试：
+- `BRNOO_MAX_ATTEMPTS`：可选，最大尝试次数（默认 3）
+- `BRNOO_BACKOFF_BASE_SECONDS`：可选，退避基数（默认 2）
+- `BRNOO_BACKOFF_MAX_SECONDS`：可选，退避最大值（默认 30）
+
+冷却/熔断：
+- `BRNOO_WALLET_FAILURE_THRESHOLD`：可选，单钱包连续失败阈值（默认 3）
+- `BRNOO_WALLET_COOLDOWN_SECONDS`：可选，钱包冷却时长（默认 300）
+- `BRNOO_CIRCUIT_FAILURE_THRESHOLD`：可选，通道连续失败阈值（默认 10）
+- `BRNOO_CIRCUIT_OPEN_SECONDS`：可选，通道熔断时长（默认 60）
+
+Notion（可选）：
+- `NOTION_TOKEN`：Notion token
+- `NOTION_RUNS_DATABASE_ID`：Runs 数据库 id
+- `NOTION_TIMEOUT_SECONDS`：可选，默认 15
+
+日志：
+- `BRNOO_LOG_LEVEL`：可选，debug/info/warn/error（默认 info）
+
+账号配置（B 模式：共享 Notion Runs）：
+- `BRNOO_ACCOUNTS_JSON` 示例（单行）：
+  - `[{"account_id":"default","wallets_manifest_path":"/var/lib/blockrunnooor/wallets/manifest.default.jsonl","prompts_file":"/etc/blockrunnooor/prompts.default.jsonl","default_daily_budget_usd":2.0,"default_max_cost_per_run_usd":0.2,"status":"active"}]`
+  - 更推荐用 `BRNOO_ACCOUNTS_DIR` 放多个 JSON 文件，便于编辑与权限控制
 
 ## 7. pm2 部署
 参考：`docs/06-deployment-pm2.md`

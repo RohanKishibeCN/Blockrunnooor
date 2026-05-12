@@ -5,8 +5,7 @@ module.exports = {
       script: "dist/index.js",
       cwd: "/opt/blockrunnooor",
       env: {
-        BRNOO_STATE_DB_PATH: "/var/lib/blockrunnooor/state/state.db",
-        BRNOO_ACCOUNTS_DIR: "/etc/blockrunnooor/accounts"
+        BRNOO_ENV_FILE: "/etc/blockrunnooor/blockrunnooor.env"
       },
       max_restarts: 10,
       restart_delay: 3000

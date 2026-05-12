@@ -29,8 +29,7 @@ module.exports = {
       script: "dist/index.js",
       cwd: "/opt/blockrunnooor",
       env: {
-        BRNOO_STATE_DB_PATH: "/var/lib/blockrunnooor/state/state.db",
-        BRNOO_ACCOUNTS_DIR: "/etc/blockrunnooor/accounts",
+        BRNOO_ENV_FILE: "/etc/blockrunnooor/blockrunnooor.env",
       },
       max_restarts: 10,
       restart_delay: 3000,
@@ -38,6 +37,10 @@ module.exports = {
   ],
 }
 ```
+
+说明：
+- orchestrator 启动时会自动读取 `BRNOO_ENV_FILE` 指向的 env 文件（默认也会尝试读取工作目录下的 `.env`）
+- 推荐把所有可调参数集中在 `/etc/blockrunnooor/blockrunnooor.env`，便于运维修改后 `pm2 restart` 生效
 
 ## 启动/停止/查看日志
 ```bash

@@ -1,8 +1,11 @@
 import { z } from "zod"
 
 const envSchema = z.object({
+  BRNOO_ENV_FILE: z.string().min(1).optional(),
+
   BRNOO_STATE_DB_PATH: z.string().min(1),
-  BRNOO_ACCOUNTS_DIR: z.string().min(1),
+  BRNOO_ACCOUNTS_DIR: z.string().min(1).optional(),
+  BRNOO_ACCOUNTS_JSON: z.string().min(1).optional(),
   BRNOO_RUN_ID_SALT: z.string().min(1),
 
   BRNOO_ORCHESTRATOR_VERSION: z.string().min(1).optional(),
@@ -36,6 +39,13 @@ const envSchema = z.object({
   NOTION_TIMEOUT_SECONDS: z.coerce.number().int().positive().optional(),
 
   BRNOO_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional()
+}).superRefine((v, ctx) => {
+  if (!v.BRNOO_ACCOUNTS_DIR && !v.BRNOO_ACCOUNTS_JSON) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "BRNOO_ACCOUNTS_DIR or BRNOO_ACCOUNTS_JSON is required"
+    })
+  }
 })
 
 export type Env = z.infer<typeof envSchema>
