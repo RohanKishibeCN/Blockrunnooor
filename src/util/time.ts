@@ -8,6 +8,15 @@ export function scheduledBucket(epochSeconds: number, bucketSeconds: number): nu
   return Math.floor(epochSeconds / bucketSeconds) * bucketSeconds
 }
 
+export function stableJitter(key: string, maxSeconds: number): number {
+  if (maxSeconds <= 0) return 0
+  const h = crypto.createHash("sha256")
+  h.update(key)
+  const hex = h.digest("hex").slice(0, 8)
+  const n = Number.parseInt(hex, 16)
+  return n % (maxSeconds + 1)
+}
+
 export function pickJitter(maxSeconds: number): number {
   if (maxSeconds <= 0) return 0
   return Math.floor(Math.random() * (maxSeconds + 1))
@@ -24,4 +33,3 @@ export function makeRunId(accountId: string, walletId: string, taskType: string,
   h.update(`${accountId}|${walletId}|${taskType}|${bucket}|${salt}`)
   return h.digest("hex").slice(0, 32)
 }
-

@@ -13,6 +13,8 @@ const envSchema = z.object({
   BRNOO_BASE_INTERVAL_SECONDS: z.coerce.number().int().positive().optional(),
   BRNOO_JITTER_MAX_SECONDS: z.coerce.number().int().nonnegative().optional(),
   BRNOO_BUCKET_SECONDS: z.coerce.number().int().positive().optional(),
+  BRNOO_SCHEDULER_POLL_SECONDS: z.coerce.number().int().positive().optional(),
+  BRNOO_WALLET_ORDER: z.enum(["sequential", "random"]).optional(),
 
   BRNOO_GLOBAL_MAX_CONCURRENCY: z.coerce.number().int().positive().optional(),
   BRNOO_PER_ACCOUNT_MAX_CONCURRENCY: z.coerce.number().int().positive().optional(),
@@ -59,6 +61,8 @@ export const defaultEnvValues = {
   baseIntervalSeconds: 60,
   jitterMaxSeconds: 10,
   bucketSeconds: 60,
+  schedulerPollSeconds: 5,
+  walletOrder: "sequential" as const,
   globalMaxConcurrency: 10,
   perAccountMaxConcurrency: 5,
   perWalletMaxConcurrency: 1,

@@ -35,9 +35,11 @@
 ## 3. 全局环境变量（可选）
 
 调度：
-- `BRNOO_BASE_INTERVAL_SECONDS`
-- `BRNOO_JITTER_MAX_SECONDS`
-- `BRNOO_BUCKET_SECONDS`
+- `BRNOO_BASE_INTERVAL_SECONDS`：每个钱包的目标执行间隔（秒）
+- `BRNOO_JITTER_MAX_SECONDS`：抖动上限（秒），用于错峰
+- `BRNOO_BUCKET_SECONDS`：幂等桶大小（秒），同一 bucket 重试复用 run_id
+- `BRNOO_SCHEDULER_POLL_SECONDS`：调度轮询间隔（秒），默认 5
+- `BRNOO_WALLET_ORDER`：钱包触发顺序（`sequential` / `random`）
 
 并发：
 - `BRNOO_GLOBAL_MAX_CONCURRENCY`

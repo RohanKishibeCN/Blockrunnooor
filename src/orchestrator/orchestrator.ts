@@ -10,7 +10,7 @@ import type { Decision, ExecutorOutput, ErrorType, ScheduleType } from "../types
 import { loadWalletManifest } from "../wallet-manifest"
 import { decide } from "../router/decision"
 import { Semaphore } from "../util/semaphore"
-import { computeBackoff, makeRunId, nowEpoch, pickJitter, scheduledBucket } from "../util/time"
+import { computeBackoff, makeRunId, nowEpoch, scheduledBucket, stableJitter } from "../util/time"
 import { parseRef, resolveRef } from "../util/ref"
 
 type TaskSpec = {
@@ -32,6 +32,8 @@ export class Orchestrator {
   private readonly walletSems = new Map<string, Semaphore>()
   private readonly walletFailures = new Map<string, number>()
   private readonly walletKeys = new Map<string, string>()
+  private readonly walletsRunning = new Set<string>()
+  private inflight = 0
 
   private readonly notion: NotionRecorder | null
 
@@ -90,6 +92,10 @@ export class Orchestrator {
   private async scheduleLoop(): Promise<void> {
     const baseInterval = this.env.BRNOO_BASE_INTERVAL_SECONDS ?? defaultEnvValues.baseIntervalSeconds
     const jitterMax = this.env.BRNOO_JITTER_MAX_SECONDS ?? defaultEnvValues.jitterMaxSeconds
+    const pollSeconds = this.env.BRNOO_SCHEDULER_POLL_SECONDS ?? defaultEnvValues.schedulerPollSeconds
+    const walletOrder = this.env.BRNOO_WALLET_ORDER ?? defaultEnvValues.walletOrder
+    const globalMax = this.env.BRNOO_GLOBAL_MAX_CONCURRENCY ?? defaultEnvValues.globalMaxConcurrency
+    const maxQueue = Math.max(globalMax * 2, globalMax + 1)
 
     while (this.running) {
       const tickStart = nowEpoch()
@@ -108,7 +114,13 @@ export class Orchestrator {
         const dailyBudget = account.default_daily_budget_usd ?? 0
         const maxCostPerRun = account.default_max_cost_per_run_usd ?? 0
 
-        for (const [walletId, rec] of walletManifest.entries()) {
+        const walletIds = Array.from(walletManifest.keys())
+        if (walletOrder === "random") shuffleInPlace(walletIds)
+
+        for (const walletId of walletIds) {
+          const rec = walletManifest.get(walletId)
+          if (!rec) continue
+
           this.repo.ensureWallet(account.account_id, walletId, dailyBudget, maxCostPerRun, day)
           this.repo.updateWalletIdentity(account.account_id, walletId, rec.address, rec.secret_ref)
           if (rec.private_key) {
@@ -117,10 +129,20 @@ export class Orchestrator {
 
           if (!promptBank || !promptBank.length) continue
 
-          const prompt = pickRandomPrompt(promptBank)
-          const jitter = pickJitter(jitterMax)
-          const scheduledAt = tickStart + jitter
+          const walletKey = `${account.account_id}:${walletId}`
+          if (this.walletsRunning.has(walletKey)) continue
+          if (this.inflight >= maxQueue) break
 
+          const wallet = this.repo.refreshDailySpentIfNeeded(account.account_id, walletId, day)
+          if (!wallet) continue
+
+          const earliest = wallet.last_run_at > 0 ? wallet.last_run_at + baseInterval : tickStart
+          const baseBucket = scheduledBucket(earliest, baseInterval)
+          const jitter = stableJitter(`${account.account_id}|${walletId}|${baseBucket}`, jitterMax)
+          const scheduledAt = earliest + jitter
+          if (scheduledAt > tickStart) continue
+
+          const prompt = pickRandomPrompt(promptBank)
           const spec: TaskSpec = {
             account_id: account.account_id,
             wallet_id: walletId,
@@ -132,25 +154,33 @@ export class Orchestrator {
             backoff_seconds: 0
           }
 
-          setTimeout(() => {
-            void this.runOnce(spec, prompt.model, prompt)
-          }, Math.max(0, (scheduledAt - nowEpoch()) * 1000))
+          this.repo.touchWalletLastRun(account.account_id, walletId, tickStart)
+          void this.runOnce(spec, prompt.model, prompt)
         }
       }
 
       const elapsed = nowEpoch() - tickStart
-      const sleepFor = Math.max(0, baseInterval - elapsed)
+      const sleepFor = Math.max(1, pollSeconds - elapsed)
       await new Promise((r) => setTimeout(r, sleepFor * 1000))
     }
   }
 
   private async runOnce(spec: TaskSpec, blockrunModel: string, prompt: { messages: unknown[]; temperature?: number; max_tokens?: number }): Promise<void> {
+    const runningKey = `${spec.account_id}:${spec.wallet_id}`
+    if (this.walletsRunning.has(runningKey)) return
+    this.walletsRunning.add(runningKey)
+    this.inflight += 1
+
     const bucketSeconds = this.env.BRNOO_BUCKET_SECONDS ?? defaultEnvValues.bucketSeconds
     const now = nowEpoch()
     const day = new Date(now * 1000).toISOString().slice(0, 10)
 
     const wallet = this.repo.refreshDailySpentIfNeeded(spec.account_id, spec.wallet_id, day)
-    if (!wallet) return
+    if (!wallet) {
+      this.walletsRunning.delete(runningKey)
+      this.inflight -= 1
+      return
+    }
 
     const circuit = this.repo.getCircuit(spec.account_id, "blockrun")
     const d = decide(wallet, circuit, now)
@@ -165,6 +195,9 @@ export class Orchestrator {
       const out = makeSkippedOutput(runId, spec, attempt, d.reason)
       this.repo.upsertRunIndex(runId, spec.account_id, spec.wallet_id, spec.task_type, bucket, attempt, idx?.notion_page_id ?? null, now)
       await this.recordAndUpdate(bucket, out, idx?.notion_page_id ?? null)
+      this.repo.touchWalletLastRun(spec.account_id, spec.wallet_id, now)
+      this.walletsRunning.delete(runningKey)
+      this.inflight -= 1
       return
     }
 
@@ -194,9 +227,11 @@ export class Orchestrator {
       if (out.status === "success") {
         this.walletFailures.set(`${spec.account_id}:${spec.wallet_id}`, 0)
         if (out.total_cost !== null) this.repo.addSpent(spec.account_id, spec.wallet_id, out.total_cost, now)
+        else this.repo.touchWalletLastRun(spec.account_id, spec.wallet_id, now)
         this.repo.upsertCircuit(spec.account_id, "blockrun", 0, 0)
         return
       }
+      this.repo.touchWalletLastRun(spec.account_id, spec.wallet_id, now)
 
       const failuresKey = `${spec.account_id}:${spec.wallet_id}`
       const failures = (this.walletFailures.get(failuresKey) ?? 0) + 1
@@ -234,6 +269,8 @@ export class Orchestrator {
       releaseWallet()
       releaseAccount()
       releaseGlobal()
+      this.walletsRunning.delete(runningKey)
+      this.inflight -= 1
     }
   }
 
@@ -314,6 +351,15 @@ export class Orchestrator {
       }
       await new Promise((r) => setTimeout(r, poll * 1000))
     }
+  }
+}
+
+function shuffleInPlace<T>(arr: T[]): void {
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    const a = arr[i]
+    arr[i] = arr[j] as T
+    arr[j] = a as T
   }
 }
 

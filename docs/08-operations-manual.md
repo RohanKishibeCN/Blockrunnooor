@@ -2,7 +2,11 @@
 
 本手册目标：在一台 VPS 上用 `pm2` 运行 TypeScript 版本 orchestrator，自动调度多组钱包轮询执行 LLM Chat（Prompt Bank 随机抽题），并通过日志、SQLite、BlockRun 健康接口与 Notion（可选）完成可观测与故障排查。
 
-本手册默认模式：多账号（account_id）共享同一个 Notion Runs 表，通过 `account_id` 字段区分账号/业务分组。
+本手册推荐模式：**1 个账号（account_id）+ N 个钱包（wallet）**。
+- 账号用于分组/统计（写入 Notion Runs 的 `account_id` 字段）
+- 钱包用于隔离密钥与支付（每个钱包可独立充值 USDC、独立支付 x402）
+
+只有在你确实需要把钱包分成多个“业务分组/客户/资金池”并做独立统计与开关时，才需要多账号（多个 account_id）。
 
 ## 0. 重要说明（必须阅读）
 - 不在仓库中保存任何真实 token/私钥；生产环境只通过环境变量或受控文件注入
@@ -41,10 +45,12 @@ mkdir -p /etc/blockrunnooor/accounts
 chmod 700 /var/lib/blockrunnooor /var/lib/blockrunnooor/state /var/lib/blockrunnooor/wallets /var/lib/blockrunnooor/secrets /etc/blockrunnooor /etc/blockrunnooor/accounts
 ```
 
-## 3. 账号（account_id）配置（多账号共享 Notion Runs）
+## 3. 账号（account_id）配置（推荐：1 账号 + 多钱包）
 
 ### 3.1 创建账号配置文件
-每个账号一个 JSON 文件，文件名不重要，以内容的 `account_id` 为准：
+账号配置目录为 `BRNOO_ACCOUNTS_DIR`（默认示例：`/etc/blockrunnooor/accounts`）。
+
+推荐模式（1 账号 + 100 钱包）只需要创建 **1 个账号 JSON**，文件名不重要，以内容的 `account_id` 为准：
 
 路径示例：`/etc/blockrunnooor/accounts/default.json`
 
@@ -55,13 +61,36 @@ chmod 700 /var/lib/blockrunnooor /var/lib/blockrunnooor/state /var/lib/blockrunn
   "wallets_manifest_path": "/var/lib/blockrunnooor/wallets/manifest.default.jsonl",
   "prompts_file": "/etc/blockrunnooor/prompts.default.jsonl",
   "default_daily_budget_usd": 2.0,
-  "default_max_cost_per_run_usd": 0.2
+  "default_max_cost_per_run_usd": 0.2,
+  "status": "active"
 }
+```
+
+创建命令示例：
+```bash
+cat >/etc/blockrunnooor/accounts/default.json <<'EOF'
+{
+  "account_id": "default",
+  "display_name": "default",
+  "wallets_manifest_path": "/var/lib/blockrunnooor/wallets/manifest.default.jsonl",
+  "prompts_file": "/etc/blockrunnooor/prompts.default.jsonl",
+  "default_daily_budget_usd": 2.0,
+  "default_max_cost_per_run_usd": 0.2,
+  "status": "paused"
+}
+EOF
+chmod 600 /etc/blockrunnooor/accounts/default.json
 ```
 
 说明：
 - Notion 配置在全局环境变量中（同一个 token/database），Runs 表中用 `account_id` 字段区分
-- `wallets_manifest_path` / `prompts_file` 可按账号独立，也可多个账号复用同一个文件
+- `wallets_manifest_path`：该账号的钱包清单（推荐 100 钱包写在同一个 manifest 文件里）
+- `prompts_file`：该账号的 Prompt Bank（通常一个账号共用一份 prompts 文件）
+- `status`：建议部署阶段先设为 `paused`，确认无误后再改为 `active`
+
+多账号（可选）：
+- 若要创建多个账号，就在该目录下放多个 JSON 文件；文件名建议用 `acc-0001.json`、`acc-0002.json` 便于排序
+- 多账号时，每个账号通常使用不同的 `wallets_manifest_path`（否则多个账号会共享同一批钱包）
 
 ## 4. 钱包清单（manifest.jsonl）
 
@@ -80,8 +109,17 @@ ls -la /var/lib/blockrunnooor/wallets/manifest.default.jsonl
 chmod 600 /var/lib/blockrunnooor/wallets/manifest.default.jsonl
 ```
 
+导出地址列表（用于批量充值，可选）：
+```bash
+node -e 'const fs=require("fs");const p="/var/lib/blockrunnooor/wallets/manifest.default.jsonl";const out="/var/lib/blockrunnooor/wallets/addresses.default.txt";const lines=fs.readFileSync(p,"utf8").trim().split(/\r?\n/).filter(Boolean).map(l=>{const o=JSON.parse(l);return `${o.wallet_id}\t${o.address}`});fs.writeFileSync(out,lines.join("\n")+"\n",{mode:0o600});console.log(out);'
+```
+
 ### 4.2 充值要求（Base 主网）
 把 USDC 充值到 manifest 中的地址，网络为 Base 主网。
+
+提示：
+- 如果你只调用 NVIDIA 的免费模型，理论上可以不充值（但建议至少准备少量 USDC，避免偶发需要付费的请求失败）
+- 若你会混用付费模型（例如 OpenAI/Anthropic），则必须充值 USDC 才能支付 x402
 
 ## 5. Prompt Bank（随机抽题）
 
@@ -97,8 +135,8 @@ chmod 600 /var/lib/blockrunnooor/wallets/manifest.default.jsonl
 ```bash
 mkdir -p /etc/blockrunnooor
 cat >/etc/blockrunnooor/prompts.default.jsonl <<'EOF'
-{"prompt_id":"p001","model":"openai/gpt-5.4","messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"用一句话解释 x402。"}],"temperature":0.2,"max_tokens":256}
-{"prompt_id":"p002","model":"deepseek/deepseek-chat","messages":[{"role":"user","content":"把下面这段话改写得更正式：Hello world"}],"temperature":0.7,"max_tokens":256}
+{"prompt_id":"p001","model":"nvidia/gpt-oss-120b","messages":[{"role":"user","content":"用一句话解释 x402。"}],"temperature":0.2,"max_tokens":128}
+{"prompt_id":"p002","model":"openai/gpt-5.4","messages":[{"role":"user","content":"把下面这段话改写得更正式：Hello world"}],"temperature":0.7,"max_tokens":256}
 EOF
 chmod 600 /etc/blockrunnooor/prompts.default.jsonl
 ```
@@ -139,6 +177,8 @@ BlockRun：
 - `BRNOO_BASE_INTERVAL_SECONDS`：可选，每轮调度间隔（默认 60）
 - `BRNOO_JITTER_MAX_SECONDS`：可选，每轮触发抖动（默认 10）
 - `BRNOO_BUCKET_SECONDS`：可选，幂等桶大小（默认 60）；同一 bucket 重试复用同一 run_id
+- `BRNOO_SCHEDULER_POLL_SECONDS`：可选，调度轮询间隔（默认 5）；值越小越“准时”，但更耗资源
+- `BRNOO_WALLET_ORDER`：可选，钱包触发顺序（`sequential` / `random`；默认 sequential）
 
 并发：
 - `BRNOO_GLOBAL_MAX_CONCURRENCY`：可选，全局并发上限
@@ -167,10 +207,25 @@ Notion（可选）：
 账号配置（B 模式：共享 Notion Runs）：
 - `BRNOO_ACCOUNTS_JSON` 示例（单行）：
   - `[{"account_id":"default","wallets_manifest_path":"/var/lib/blockrunnooor/wallets/manifest.default.jsonl","prompts_file":"/etc/blockrunnooor/prompts.default.jsonl","default_daily_budget_usd":2.0,"default_max_cost_per_run_usd":0.2,"status":"active"}]`
-  - 更推荐用 `BRNOO_ACCOUNTS_DIR` 放多个 JSON 文件，便于编辑与权限控制
+  - 推荐模式（1 账号 + 100 钱包）同样可以用 `BRNOO_ACCOUNTS_DIR`，但只放 1 个 `default.json` 即可
+  - 只有在你要拆成多个业务分组时，才需要在 `BRNOO_ACCOUNTS_DIR` 下放多个账号 JSON 文件
 
 ## 7. pm2 部署
 参考：`docs/06-deployment-pm2.md`
+
+最小步骤（推荐）：
+```bash
+cp /opt/blockrunnooor/ecosystem.config.cjs /etc/blockrunnooor/ecosystem.config.cjs
+pm2 start /etc/blockrunnooor/ecosystem.config.cjs
+pm2 status
+pm2 logs blockrunnooor --lines 200
+```
+
+把账号从 `paused` 改为 `active` 后重启使其生效：
+```bash
+nano /etc/blockrunnooor/accounts/default.json
+pm2 restart blockrunnooor
+```
 
 ## 8. BlockRun 侧健康检查（免费接口）
 ```bash

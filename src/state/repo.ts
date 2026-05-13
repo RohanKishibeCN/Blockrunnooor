@@ -115,6 +115,10 @@ ON CONFLICT(wallet_id) DO NOTHING
       .run(deltaUsd, now, accountId, walletId)
   }
 
+  touchWalletLastRun(accountId: string, walletId: string, now: number): void {
+    this.db.prepare("UPDATE wallets SET last_run_at=? WHERE account_id=? AND wallet_id=?").run(now, accountId, walletId)
+  }
+
   setCooldown(accountId: string, walletId: string, cooldownUntil: number): void {
     this.db.prepare("UPDATE wallets SET cooldown_until=? WHERE account_id=? AND wallet_id=?").run(cooldownUntil, accountId, walletId)
   }
@@ -188,4 +192,3 @@ ON CONFLICT(run_id) DO UPDATE SET attempt=excluded.attempt, notion_page_id=COALE
     this.db.prepare("UPDATE notion_outbox SET next_retry_at=?, attempt=?, last_error=? WHERE id=?").run(nextRetryAt, attempt, lastError, id)
   }
 }
-
