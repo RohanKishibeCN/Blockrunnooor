@@ -1,3 +1,4 @@
+import { APIError, LLMClient, PaymentError, type ChatMessage, type ChatResponse } from "@blockrun/llm"
 import type { ErrorType } from "../types"
 
 export type BlockRunResponse = {
@@ -13,76 +14,108 @@ export type BlockRunResponse = {
   total_cost: number | null
   input_tokens: number | null
   output_tokens: number | null
+  gateway: string | null
+  settlement_tx: string | null
 }
 
 export class BlockRunClient {
+  private readonly gateway: string | null
+
   constructor(
     private readonly apiUrl: string,
     private readonly walletKey: string | null,
     private readonly timeoutSeconds: number
-  ) {}
+  ) {
+    this.gateway = safeHostname(apiUrl)
+  }
 
-  async call(path: string, payload: Record<string, unknown>): Promise<BlockRunResponse> {
-    const url = `${this.apiUrl.replace(/\/+$/, "")}${path}`
-    const headers: Record<string, string> = { "Content-Type": "application/json" }
-    if (this.walletKey) headers.Authorization = `Bearer ${this.walletKey}`
-
-    const ac = new AbortController()
-    const t = setTimeout(() => ac.abort(), this.timeoutSeconds * 1000)
+  async call(_path: string, payload: Record<string, unknown>): Promise<BlockRunResponse> {
     const start = Date.now()
-
+    const gateway = this.gateway
     try {
-      const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(payload), signal: ac.signal })
+      const client = new LLMClient({
+        privateKey: this.walletKey ?? undefined,
+        apiUrl: this.apiUrl,
+        timeout: this.timeoutSeconds * 1000
+      })
+
+      const model = typeof payload.model === "string" ? payload.model : ""
+      const messages = Array.isArray(payload.messages) ? (payload.messages as ChatMessage[]) : []
+      const temperature = typeof payload.temperature === "number" ? payload.temperature : undefined
+      const maxTokens = typeof payload.max_tokens === "number" ? payload.max_tokens : undefined
+
+      const before = client.getSpending()
+      const resp = await client.chatCompletion(model, messages, { temperature, maxTokens })
+      const after = client.getSpending()
+
       const latencyMs = Date.now() - start
-      const requestId = resp.headers.get("x-request-id") || resp.headers.get("request-id")
+      const costUsd = Number.isFinite(after.totalUsd - before.totalUsd) ? after.totalUsd - before.totalUsd : null
 
-      let parsed: unknown | null = null
-      const text = await resp.text()
-      if (text.trim()) {
-        try {
-          parsed = JSON.parse(text)
-        } catch {
-          parsed = text
-        }
-      }
+      const usage = resp.usage
+      const inputTokens = usage?.prompt_tokens ?? null
+      const outputTokens = usage?.completion_tokens ?? null
 
-      if (resp.ok) {
-        const { model, totalCost, inTokens, outTokens, reqId } = extractSuccessFields(parsed)
-        return {
-          ok: true,
-          status_code: resp.status,
-          latency_ms: latencyMs,
-          json: parsed,
-          error_type: null,
-          error_code: null,
-          error_message: null,
-          request_id: reqId ?? requestId,
-          model,
-          total_cost: totalCost,
-          input_tokens: inTokens,
-          output_tokens: outTokens
-        }
-      }
+      const effectiveModel = resp.fallback?.model ?? resp.model
+      const settlementTx = extractSettlementTx(resp)
 
-      const errorType: ErrorType =
-        resp.status === 429 ? "rate_limit" : resp.status >= 500 ? "upstream" : resp.status >= 400 ? "validation" : "unknown"
-      const msg = extractErrorMessage(parsed, text).slice(0, 200)
       return {
-        ok: false,
-        status_code: resp.status,
+        ok: true,
+        status_code: 200,
         latency_ms: latencyMs,
-        json: parsed,
-        error_type: errorType,
-        error_code: String(resp.status),
-        error_message: msg,
-        request_id: requestId,
-        model: null,
-        total_cost: null,
-        input_tokens: null,
-        output_tokens: null
+        json: resp,
+        error_type: null,
+        error_code: null,
+        error_message: null,
+        request_id: resp.id ?? null,
+        model: typeof effectiveModel === "string" ? effectiveModel : null,
+        total_cost: typeof costUsd === "number" && Number.isFinite(costUsd) ? costUsd : null,
+        input_tokens: typeof inputTokens === "number" && Number.isFinite(inputTokens) ? inputTokens : null,
+        output_tokens: typeof outputTokens === "number" && Number.isFinite(outputTokens) ? outputTokens : null,
+        gateway,
+        settlement_tx: settlementTx
       }
     } catch (e) {
       const latencyMs = Date.now() - start
+      if (e instanceof APIError) {
+        const status = e.statusCode
+        const errorType: ErrorType =
+          status === 429 ? "rate_limit" : status >= 500 ? "upstream" : status >= 400 ? "validation" : "unknown"
+        const msg = safeErrorMessage(e.response, e.message)
+        return {
+          ok: false,
+          status_code: status,
+          latency_ms: latencyMs,
+          json: e.response ?? null,
+          error_type: errorType,
+          error_code: String(status),
+          error_message: msg,
+          request_id: null,
+          model: null,
+          total_cost: null,
+          input_tokens: null,
+          output_tokens: null,
+          gateway,
+          settlement_tx: null
+        }
+      }
+      if (e instanceof PaymentError) {
+        return {
+          ok: false,
+          status_code: 402,
+          latency_ms: latencyMs,
+          json: null,
+          error_type: "budget",
+          error_code: "payment_error",
+          error_message: safeErrorMessage(null, e.message),
+          request_id: null,
+          model: null,
+          total_cost: null,
+          input_tokens: null,
+          output_tokens: null,
+          gateway,
+          settlement_tx: null
+        }
+      }
       const msg = e instanceof Error ? e.message : String(e)
       return {
         ok: false,
@@ -90,62 +123,42 @@ export class BlockRunClient {
         latency_ms: latencyMs,
         json: null,
         error_type: "network",
-        error_code: msg.includes("abort") ? "timeout" : "request_error",
+        error_code: "request_error",
         error_message: msg.slice(0, 200),
         request_id: null,
         model: null,
         total_cost: null,
         input_tokens: null,
-        output_tokens: null
+        output_tokens: null,
+        gateway,
+        settlement_tx: null
       }
-    } finally {
-      clearTimeout(t)
     }
   }
 }
 
-function extractSuccessFields(parsed: unknown): {
-  model: string | null
-  totalCost: number | null
-  inTokens: number | null
-  outTokens: number | null
-  reqId: string | null
-} {
-  if (!parsed || typeof parsed !== "object") {
-    return { model: null, totalCost: null, inTokens: null, outTokens: null, reqId: null }
+function safeHostname(url: string): string | null {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return null
   }
-  const p = parsed as Record<string, unknown>
-  const modelRaw = p.model ?? p.channel_model
-  const model = typeof modelRaw === "string" ? modelRaw : null
-  const reqIdRaw = p.request_id ?? p.id
-  const reqId = typeof reqIdRaw === "string" ? reqIdRaw : null
-
-  let totalCost: number | null = null
-  let inTokens: number | null = null
-  let outTokens: number | null = null
-
-  const usage = p.usage
-  if (usage && typeof usage === "object") {
-    const u = usage as Record<string, unknown>
-    const inRaw = u.input_tokens ?? u.prompt_tokens
-    const outRaw = u.output_tokens ?? u.completion_tokens
-    const costRaw = u.total_cost ?? u.cost
-    if (typeof inRaw === "number" && Number.isFinite(inRaw)) inTokens = inRaw
-    if (typeof outRaw === "number" && Number.isFinite(outRaw)) outTokens = outRaw
-    if (typeof costRaw === "number" && Number.isFinite(costRaw)) totalCost = costRaw
-  }
-  const totalCostRaw = p.total_cost
-  if (typeof totalCostRaw === "number" && Number.isFinite(totalCostRaw)) totalCost = totalCostRaw
-
-  return { model, totalCost, inTokens, outTokens, reqId }
 }
 
-function extractErrorMessage(parsed: unknown, fallbackText: string): string {
-  if (parsed && typeof parsed === "object") {
-    const p = parsed as Record<string, unknown>
-    const msg = p.error ?? p.message
-    if (typeof msg === "string" && msg) return msg
+function safeErrorMessage(response: unknown, fallback: string): string {
+  if (response && typeof response === "object") {
+    const r = response as Record<string, unknown>
+    const msg = r.error ?? r.message
+    if (typeof msg === "string" && msg) return msg.slice(0, 200)
   }
-  return fallbackText || "error"
+  return (fallback || "error").slice(0, 200)
 }
 
+function extractSettlementTx(resp: ChatResponse): string | null {
+  const r = resp as unknown as Record<string, unknown>
+  const candidates = [r.settlement_tx, r.payment_receipt, r.paymentReceipt, r.tx, r.receipt]
+  for (const c of candidates) {
+    if (typeof c === "string" && c) return c
+  }
+  return null
+}

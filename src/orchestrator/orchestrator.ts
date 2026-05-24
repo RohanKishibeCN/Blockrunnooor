@@ -155,7 +155,7 @@ export class Orchestrator {
           }
 
           this.repo.touchWalletLastRun(account.account_id, walletId, tickStart)
-          void this.runOnce(spec, prompt.model, prompt)
+          void this.runOnce(spec, prompt)
         }
       }
 
@@ -165,7 +165,7 @@ export class Orchestrator {
     }
   }
 
-  private async runOnce(spec: TaskSpec, blockrunModel: string, prompt: { messages: unknown[]; temperature?: number; max_tokens?: number }): Promise<void> {
+  private async runOnce(spec: TaskSpec, prompt: { messages: unknown[]; temperature?: number; max_tokens?: number }): Promise<void> {
     const runningKey = `${spec.account_id}:${spec.wallet_id}`
     if (this.walletsRunning.has(runningKey)) return
     this.walletsRunning.add(runningKey)
@@ -192,7 +192,7 @@ export class Orchestrator {
     const attempt = idx && spec.schedule_type === "retry" ? idx.attempt + 1 : spec.attempt
 
     if (d.decision === "deny") {
-      const out = makeSkippedOutput(runId, spec, attempt, d.reason)
+      const out = makeSkippedOutput(runId, spec, attempt, d.reason, maskAddress(wallet.address), safeHostname(this.env.BLOCKRUN_API_URL))
       this.repo.upsertRunIndex(runId, spec.account_id, spec.wallet_id, spec.task_type, bucket, attempt, idx?.notion_page_id ?? null, now)
       await this.recordAndUpdate(bucket, out, idx?.notion_page_id ?? null)
       this.repo.touchWalletLastRun(spec.account_id, spec.wallet_id, now)
@@ -213,14 +213,14 @@ export class Orchestrator {
       const client = new BlockRunClient(this.env.BLOCKRUN_API_URL, walletKey, brTimeout)
 
       const payload: Record<string, unknown> = {
-        model: blockrunModel,
+        model: this.env.BRNOO_BLOCKRUN_MODEL,
         messages: prompt.messages
       }
       if (typeof prompt.temperature === "number") payload.temperature = prompt.temperature
       if (typeof prompt.max_tokens === "number") payload.max_tokens = prompt.max_tokens
 
       const resp = await client.call(this.env.BLOCKRUN_CHAT_PATH, payload)
-      const out = makeExecutorOutput(runId, spec, attempt, resp)
+      const out = makeExecutorOutput(runId, spec, attempt, resp, maskAddress(wallet.address))
 
       await this.recordAndUpdate(bucket, out, idx?.notion_page_id ?? null)
 
@@ -263,7 +263,7 @@ export class Orchestrator {
           attempt: attempt + 1,
           backoff_seconds: bo
         }
-        setTimeout(() => void this.runOnce(retrySpec, blockrunModel, prompt), bo * 1000)
+        setTimeout(() => void this.runOnce(retrySpec, prompt), bo * 1000)
       }
     } finally {
       releaseWallet()
@@ -310,7 +310,9 @@ export class Orchestrator {
 
     if (!res.ok && res.retryable) {
       const now = nowEpoch()
-      const nextRetry = now + backoffSeconds(2, 1, 60)
+      const backoffBase = this.env.NOTION_RETRY_BACKOFF_BASE_SECONDS ?? 2
+      const backoffMax = this.env.NOTION_RETRY_BACKOFF_MAX_SECONDS ?? 300
+      const nextRetry = now + backoffSeconds(backoffBase, 1, Math.min(60, backoffMax))
       this.repo.enqueueOutbox(out.account_id, out.run_id, JSON.stringify(out), nextRetry, 1, res.error)
       logEvent("warn", "notion_upsert_failed", { run_id: out.run_id, error: res.error, retryable: true })
       return
@@ -345,7 +347,9 @@ export class Orchestrator {
             this.repo.deleteOutboxItem(item.id)
             continue
           }
-          const nextRetry = now + backoffSeconds(2, item.attempt + 1, 300)
+          const backoffBase = this.env.NOTION_RETRY_BACKOFF_BASE_SECONDS ?? 2
+          const backoffMax = this.env.NOTION_RETRY_BACKOFF_MAX_SECONDS ?? 300
+          const nextRetry = now + backoffSeconds(backoffBase, item.attempt + 1, backoffMax)
           this.repo.updateOutboxItem(item.id, nextRetry, item.attempt + 1, res.error)
         }
       }
@@ -363,23 +367,33 @@ function shuffleInPlace<T>(arr: T[]): void {
   }
 }
 
-function makeSkippedOutput(runId: string, spec: TaskSpec, attempt: number, reason: string): ExecutorOutput {
+function makeSkippedOutput(
+  runId: string,
+  spec: TaskSpec,
+  attempt: number,
+  reason: string,
+  walletAddress: string | null,
+  gateway: string | null
+): ExecutorOutput {
   const errorType: ErrorType | null = reason.includes("budget") ? "budget" : "unknown"
   return {
     run_id: runId,
     account_id: spec.account_id,
     wallet_id: spec.wallet_id,
+    wallet_address: walletAddress,
     task_type: spec.task_type,
     schedule_type: spec.schedule_type,
     attempt,
     decision: "deny",
     channel: "blockrun",
+    gateway,
     model: null,
     status: "skipped",
     latency_ms: 0,
     total_cost: null,
     input_tokens: null,
     output_tokens: null,
+    settlement_tx: null,
     request_id: null,
     error_type: errorType,
     error_code: reason,
@@ -405,7 +419,10 @@ function makeExecutorOutput(
     error_type: ErrorType | null
     error_code: string | null
     error_message: string | null
-  }
+    gateway: string | null
+    settlement_tx: string | null
+  },
+  walletAddress: string | null
 ): ExecutorOutput {
   const status = resp.ok ? "success" : "failed"
   const decision: Decision = "blockrun"
@@ -413,17 +430,20 @@ function makeExecutorOutput(
     run_id: runId,
     account_id: spec.account_id,
     wallet_id: spec.wallet_id,
+    wallet_address: walletAddress,
     task_type: spec.task_type,
     schedule_type: spec.schedule_type,
     attempt,
     decision,
     channel: "blockrun",
+    gateway: resp.gateway,
     model: resp.model,
     status,
     latency_ms: resp.latency_ms,
     total_cost: resp.total_cost,
     input_tokens: resp.input_tokens,
     output_tokens: resp.output_tokens,
+    settlement_tx: resp.settlement_tx,
     request_id: resp.request_id,
     error_type: resp.ok ? null : resp.error_type ?? "unknown",
     error_code: resp.ok ? null : resp.error_code,
@@ -431,5 +451,18 @@ function makeExecutorOutput(
     jitter_seconds: spec.jitter_seconds,
     backoff_seconds: spec.backoff_seconds,
     created_at: new Date().toISOString()
+  }
+}
+
+function maskAddress(addr: string | null): string | null {
+  if (!addr || addr.length < 12) return addr
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`
+}
+
+function safeHostname(url: string): string | null {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return null
   }
 }

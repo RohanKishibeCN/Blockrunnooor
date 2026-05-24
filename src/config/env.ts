@@ -31,6 +31,7 @@ const envSchema = z.object({
 
   BRNOO_OUTBOX_POLL_SECONDS: z.coerce.number().int().positive().optional(),
 
+  BRNOO_BLOCKRUN_MODEL: z.string().min(1),
   BLOCKRUN_API_URL: z.string().min(1),
   BLOCKRUN_CHAT_PATH: z.string().min(1),
   BLOCKRUN_TIMEOUT_SECONDS: z.coerce.number().int().positive().optional(),
@@ -39,6 +40,8 @@ const envSchema = z.object({
   NOTION_TOKEN: z.string().min(1).optional(),
   NOTION_RUNS_DATABASE_ID: z.string().min(1).optional(),
   NOTION_TIMEOUT_SECONDS: z.coerce.number().int().positive().optional(),
+  NOTION_RETRY_BACKOFF_BASE_SECONDS: z.coerce.number().int().positive().optional(),
+  NOTION_RETRY_BACKOFF_MAX_SECONDS: z.coerce.number().int().positive().optional(),
 
   BRNOO_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional()
 }).superRefine((v, ctx) => {
