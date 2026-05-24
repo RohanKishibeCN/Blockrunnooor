@@ -35,10 +35,13 @@ export function buildRunProperties(out: ExecutorOutput, orchestratorVersion: str
     latency_ms: number(out.latency_ms),
     orchestrator_version: richText(orchestratorVersion)
   }
+  if (out.wallet_address) props.wallet_address = richText(out.wallet_address)
+  if (out.gateway) props.gateway = richText(out.gateway)
   if (out.model) props.model = richText(out.model)
   if (out.total_cost !== null) props.total_cost = number(out.total_cost)
   if (out.input_tokens !== null) props.input_tokens = number(out.input_tokens)
   if (out.output_tokens !== null) props.output_tokens = number(out.output_tokens)
+  if (out.settlement_tx) props.settlement_tx = richText(out.settlement_tx)
   if (out.error_type) props.error_type = select(out.error_type)
   if (out.error_code) props.error_code = richText(out.error_code)
   if (out.error_message) props.error_message = richText(out.error_message)

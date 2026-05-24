@@ -7,17 +7,20 @@ export type ExecutorOutput = {
   run_id: string
   account_id: string
   wallet_id: string
+  wallet_address: string | null
   task_type: string
   schedule_type: ScheduleType
   attempt: number
   decision: Decision
   channel: string
+  gateway: string | null
   model: string | null
   status: RunStatus
   latency_ms: number
   total_cost: number | null
   input_tokens: number | null
   output_tokens: number | null
+  settlement_tx: string | null
   request_id: string | null
   error_type: ErrorType | null
   error_code: string | null
@@ -29,7 +32,6 @@ export type ExecutorOutput = {
 
 export type PromptItem = {
   prompt_id: string
-  model: string
   messages: unknown[]
   temperature?: number
   max_tokens?: number
