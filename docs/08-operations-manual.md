@@ -128,18 +128,28 @@ node -e 'const fs=require("fs");const p="/var/lib/blockrunnooor/wallets/manifest
 
 每行一个 JSON，字段：
 - `prompt_id`：唯一 id，会作为 `task_type` 进入 Runs 记录
-- `model`：BlockRun 模型 id，例如 `openai/gpt-5.4`
 - `messages`：OpenAI 兼容的 messages 数组
 - 可选：`temperature`、`max_tokens`
+
+说明：
+- Prompt Bank 不维护模型选择；运行时模型由环境变量 `BRNOO_BLOCKRUN_MODEL` 统一决定
 
 ```bash
 mkdir -p /etc/blockrunnooor
 cat >/etc/blockrunnooor/prompts.default.jsonl <<'EOF'
-{"prompt_id":"p001","model":"nvidia/gpt-oss-120b","messages":[{"role":"user","content":"用一句话解释 x402。"}],"temperature":0.2,"max_tokens":128}
-{"prompt_id":"p002","model":"openai/gpt-5.4","messages":[{"role":"user","content":"把下面这段话改写得更正式：Hello world"}],"temperature":0.7,"max_tokens":256}
+{"prompt_id":"p001","messages":[{"role":"user","content":"用一句话解释 x402。"}],"temperature":0.2,"max_tokens":128}
+{"prompt_id":"p002","messages":[{"role":"user","content":"把下面这段话改写得更正式：Hello world"}],"temperature":0.7,"max_tokens":256}
 EOF
 chmod 600 /etc/blockrunnooor/prompts.default.jsonl
 ```
+
+建议把 Prompt Bank 扩充到 100 条以减少重复与风控相关性，并覆盖不同输出形态（短答/长文/结构化 JSON）。推荐配比：
+- 20：摘要/改写/压缩
+- 20：信息抽取/结构化（偏 JSON 输出）
+- 15：翻译/双语/术语
+- 15：分类/打标/置信度
+- 15：推理/多步
+- 15：代码相关
 
 ## 6. 环境变量配置（全部可调参入口）
 
@@ -168,10 +178,13 @@ nano /etc/blockrunnooor/blockrunnooor.env
 - `BRNOO_ACCOUNTS_JSON`：账号配置 JSON 数组字符串（与 `BRNOO_ACCOUNTS_DIR` 二选一）
 
 BlockRun：
+- `BRNOO_BLOCKRUN_MODEL`：必填，全局单模型 id（例如 `deepseek/deepseek-chat` / `openai/gpt-5.5` / `nvidia/gpt-oss-120b`）
 - `BLOCKRUN_API_URL`：必填，例如 `https://blockrun.ai/api`
 - `BLOCKRUN_CHAT_PATH`：必填，例如 `/v1/chat/completions`
 - `BLOCKRUN_TIMEOUT_SECONDS`：可选，默认 30
 - `BLOCKRUN_WALLET_KEY`：可选，全局 wallet key（不推荐用于多钱包；多钱包建议在 manifest 写 `private_key` 或 `secret_ref`）
+说明：
+- `BLOCKRUN_CHAT_PATH` 为兼容保留：接入 BlockRun 官方 TypeScript SDK 后不再依赖该字段，但当前仍建议保留配置以便回滚
 
 调度：
 - `BRNOO_BASE_INTERVAL_SECONDS`：可选，每轮调度间隔（默认 60）
@@ -200,6 +213,8 @@ Notion（可选）：
 - `NOTION_TOKEN`：Notion token
 - `NOTION_RUNS_DATABASE_ID`：Runs 数据库 id
 - `NOTION_TIMEOUT_SECONDS`：可选，默认 15
+- `NOTION_RETRY_BACKOFF_BASE_SECONDS`：Notion 写入失败的重试退避基数（默认 2）
+- `NOTION_RETRY_BACKOFF_MAX_SECONDS`：Notion 写入失败的重试退避最大秒数（默认 300）
 
 日志：
 - `BRNOO_LOG_LEVEL`：可选，debug/info/warn/error（默认 info）
