@@ -9,12 +9,15 @@
 ## 何时走 BlockRun（建议）
 - 默认全部先尝试 BlockRun
 - 若 BlockRun 未触发熔断且钱包预算允许：继续优先
+- 模型选择统一由环境变量 `BRNOO_BLOCKRUN_MODEL` 决定；Prompt Bank 只维护 messages，不维护 model
 
 ## 何时 fallback 到自有 Kimi（建议）
 - BlockRun 不可用错误（网络超时、5xx、网关不可用）
 - BlockRun 触发熔断窗口
 - BlockRun 成本/额度策略不允许（达到当日限额或单次上限）
 - BlockRun 错误属于可替代类型（非参数/内容错误）
+说明：
+- 当前 TypeScript 版本实现以 BlockRun 为唯一执行通道；如需启用 Kimi 兜底，需要补充 fallback client 与路由分支
 
 ## 何时禁止（deny）
 - 钱包预算耗尽或触发安全阈值
@@ -25,6 +28,8 @@
 - channel：blockrun / kimi
 - model：blockrun-xxx / kimi-k2.6
 - request_id：上游返回的追踪 id（如有）
+- gateway：网关域名（如 `blockrun.ai` / `testnet.blockrun.ai`）（如有）
+- settlement_tx：结算 tx hash 或 payment receipt（如有）
 - cost：input_tokens / output_tokens / total_cost（统一折算口径）
 - latency_ms
 - error：error_type / error_code / error_message（脱敏）

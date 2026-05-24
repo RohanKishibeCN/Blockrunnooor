@@ -25,10 +25,13 @@
   - `BRNOO_ACCOUNTS_JSON`：JSON 数组字符串（单行），用于把账号配置也集中到 env 文件里
 - `BRNOO_RUN_ID_SALT`
   - 生成 run_id 的盐（不要泄漏）
+- `BRNOO_BLOCKRUN_MODEL`
+  - 全局单模型配置；每次 run 都使用该模型 id（例如 `deepseek/deepseek-chat`、`openai/gpt-5.5`、`nvidia/gpt-oss-120b`）
 - `BLOCKRUN_API_URL`
   - 例如 `https://blockrun.ai/api`
 - `BLOCKRUN_CHAT_PATH`
   - 例如 `/v1/chat/completions`
+  - 兼容保留：接入 BlockRun 官方 TypeScript SDK 后不再依赖该字段，但当前仍建议保留配置以便回滚
 - `BLOCKRUN_TIMEOUT_SECONDS`
   - 例如 `30`
 
@@ -61,6 +64,8 @@ Notion（可选）：
 - `NOTION_TOKEN`
 - `NOTION_RUNS_DATABASE_ID`
 - `NOTION_TIMEOUT_SECONDS`
+- `NOTION_RETRY_BACKOFF_BASE_SECONDS`：Notion 写入失败的重试退避基数（默认 2）
+- `NOTION_RETRY_BACKOFF_MAX_SECONDS`：Notion 写入失败的重试退避最大秒数（默认 300）
 
 日志：
 - `BRNOO_LOG_LEVEL`
@@ -85,6 +90,7 @@ Notion（可选）：
 - `BRNOO_STATE_DB_PATH`
 - `BRNOO_ACCOUNTS_DIR`
 - `BRNOO_RUN_ID_SALT`
+- `BRNOO_BLOCKRUN_MODEL`
 - `BLOCKRUN_API_URL` / `BLOCKRUN_CHAT_PATH` / `BLOCKRUN_TIMEOUT_SECONDS`
 - Notion（如启用）：`NOTION_TOKEN` / `NOTION_RUNS_DATABASE_ID`
 

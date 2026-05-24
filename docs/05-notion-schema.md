@@ -9,17 +9,19 @@
 - account_id -> Select/文本 -> 账号/业务分组（同一个 Runs 表承载多个账号时必填）
 - wallet_id -> Select/文本 -> 钱包标识（不要写私钥/助记词）
 - wallet_address -> 文本 -> 可选；建议脱敏或只存后缀
+- gateway -> Select/文本 -> 可选；请求网关域名（例如 `blockrun.ai` / `testnet.blockrun.ai` / `nano.blockrun.ai`）
 - task_type -> Select -> 任务类型
 - schedule_type -> Select -> cron/random/retry
 - attempt -> Number -> 重试第几次
 - decision -> Select -> blockrun/fallback/deny
 - channel -> Select -> blockrun/kimi
-- model -> Select/文本 -> 实际模型/通道标识
+- model -> Select/文本 -> 实际模型/通道标识（建议用 Select，便于按模型聚合统计）
 - status -> Select -> success/failed/skipped
 - latency_ms -> Number
 - total_cost -> Number -> 统一成本口径（注明币种，如 USD）
 - input_tokens -> Number -> 可选
 - output_tokens -> Number -> 可选
+- settlement_tx -> 文本 -> 可选；x402 结算 tx hash 或 payment receipt（用于对账）
 - error_type -> Select -> network/upstream/validation/budget/unknown
 - error_code -> 文本 -> 可选
 - error_message -> 文本 -> 脱敏后的简述
