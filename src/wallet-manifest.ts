@@ -1,6 +1,6 @@
 import { z } from "zod"
-import type { WalletManifestRecord } from "./types"
-import { readJsonlFile } from "./util/jsonl"
+import type { WalletManifestRecord } from "./types.js"
+import { readJsonlFile } from "./util/jsonl.js"
 
 const walletSchema = z.object({
   wallet_id: z.string().min(1),
@@ -16,4 +16,3 @@ export function loadWalletManifest(filePath: string): Map<string, WalletManifest
   for (const r of recs) m.set(r.wallet_id, r)
   return m
 }
-
