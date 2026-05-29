@@ -1,4 +1,4 @@
-import type { CircuitRow, WalletRow } from "../state/repo"
+import type { CircuitRow, WalletRow } from "../state/repo.js"
 
 export type DecisionResult =
   | { decision: "deny"; reason: string }
@@ -11,4 +11,3 @@ export function decide(wallet: WalletRow, circuit: CircuitRow, now: number): Dec
   if (circuit.open_until && circuit.open_until > now) return { decision: "deny", reason: "channel_circuit_open" }
   return { decision: "blockrun" }
 }
-

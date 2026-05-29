@@ -1,17 +1,17 @@
-import type { AccountConfig } from "../config/accounts"
-import { defaultEnvValues, type Env } from "../config/env"
-import { BlockRunClient } from "../clients/blockrun"
-import { NotionClient, backoffSeconds } from "../clients/notion"
-import { logEvent } from "../logging"
-import { NotionRecorder } from "../notion/recorder"
-import { loadPromptBank, pickRandomPrompt } from "../prompt-bank"
-import { StateRepo } from "../state/repo"
-import type { Decision, ExecutorOutput, ErrorType, ScheduleType } from "../types"
-import { loadWalletManifest } from "../wallet-manifest"
-import { decide } from "../router/decision"
-import { Semaphore } from "../util/semaphore"
-import { computeBackoff, makeRunId, nowEpoch, scheduledBucket, stableJitter } from "../util/time"
-import { parseRef, resolveRef } from "../util/ref"
+import type { AccountConfig } from "../config/accounts.js"
+import { defaultEnvValues, type Env } from "../config/env.js"
+import { BlockRunClient } from "../clients/blockrun.js"
+import { NotionClient, backoffSeconds } from "../clients/notion.js"
+import { logEvent } from "../logging.js"
+import { NotionRecorder } from "../notion/recorder.js"
+import { loadPromptBank, pickWeightedPrompt } from "../prompt-bank.js"
+import { StateRepo } from "../state/repo.js"
+import type { Decision, ExecutorOutput, ErrorType, PromptItem, PromptItemApi, PromptItemChat, ScheduleType, TaskKind } from "../types.js"
+import { loadWalletManifest } from "../wallet-manifest.js"
+import { decide } from "../router/decision.js"
+import { Semaphore } from "../util/semaphore.js"
+import { computeBackoff, makeRunId, nowEpoch, scheduledBucket, stableJitter } from "../util/time.js"
+import { parseRef, resolveRef } from "../util/ref.js"
 
 type TaskSpec = {
   account_id: string
@@ -23,6 +23,24 @@ type TaskSpec = {
   attempt: number
   backoff_seconds: number
 }
+
+type PlannedTask =
+  | {
+      kind: "chat"
+      prompt_id: string
+      model: string
+      messages: unknown[]
+      temperature?: number
+      max_tokens?: number
+    }
+  | {
+      kind: Exclude<TaskKind, "chat">
+      prompt_id: string
+      method: "GET" | "POST"
+      path: string
+      params?: Record<string, unknown>
+      body?: Record<string, unknown>
+    }
 
 export class Orchestrator {
   private running = true
@@ -142,7 +160,7 @@ export class Orchestrator {
           const scheduledAt = earliest + jitter
           if (scheduledAt > tickStart) continue
 
-          const prompt = pickRandomPrompt(promptBank)
+          const prompt = planTask(promptBank, this.env)
           const spec: TaskSpec = {
             account_id: account.account_id,
             wallet_id: walletId,
@@ -165,7 +183,7 @@ export class Orchestrator {
     }
   }
 
-  private async runOnce(spec: TaskSpec, prompt: { messages: unknown[]; temperature?: number; max_tokens?: number }): Promise<void> {
+  private async runOnce(spec: TaskSpec, task: PlannedTask): Promise<void> {
     const runningKey = `${spec.account_id}:${spec.wallet_id}`
     if (this.walletsRunning.has(runningKey)) return
     this.walletsRunning.add(runningKey)
@@ -212,14 +230,23 @@ export class Orchestrator {
       const brTimeout = this.env.BLOCKRUN_TIMEOUT_SECONDS ?? defaultEnvValues.blockrunTimeoutSeconds
       const client = new BlockRunClient(this.env.BLOCKRUN_API_URL, walletKey, brTimeout)
 
-      const payload: Record<string, unknown> = {
-        model: this.env.BRNOO_BLOCKRUN_MODEL,
-        messages: prompt.messages
+      const payload: Record<string, unknown> = {}
+      let path = this.env.BLOCKRUN_CHAT_PATH
+      if (task.kind === "chat") {
+        payload.model = task.model
+        payload.messages = task.messages
+        if (typeof task.temperature === "number") payload.temperature = task.temperature
+        if (typeof task.max_tokens === "number") payload.max_tokens = task.max_tokens
+      } else {
+        path = task.path
+        payload.method = task.method
+        payload.path = task.path
+        payload.params = task.params
+        payload.body = task.body
+        payload.label = task.kind
       }
-      if (typeof prompt.temperature === "number") payload.temperature = prompt.temperature
-      if (typeof prompt.max_tokens === "number") payload.max_tokens = prompt.max_tokens
 
-      const resp = await client.call(this.env.BLOCKRUN_CHAT_PATH, payload)
+      const resp = await client.call(path, payload)
       const out = makeExecutorOutput(runId, spec, attempt, resp, maskAddress(wallet.address))
 
       await this.recordAndUpdate(bucket, out, idx?.notion_page_id ?? null)
@@ -263,7 +290,7 @@ export class Orchestrator {
           attempt: attempt + 1,
           backoff_seconds: bo
         }
-        setTimeout(() => void this.runOnce(retrySpec, prompt), bo * 1000)
+        setTimeout(() => void this.runOnce(retrySpec, task), bo * 1000)
       }
     } finally {
       releaseWallet()
@@ -465,4 +492,98 @@ function safeHostname(url: string): string | null {
   } catch {
     return null
   }
+}
+
+function planTask(bank: PromptItem[], env: Env): PlannedTask {
+  const kind = pickTaskKind(bank, env)
+  const candidates = bank.filter((p) => ((p as any).kind ?? "chat") === kind)
+  const picked = pickWeightedPrompt(candidates.length ? candidates : bank) as PromptItem
+  const pKind = ((picked as any).kind ?? "chat") as TaskKind
+  if (pKind === "chat") {
+    const chat = picked as PromptItemChat
+    return {
+      kind: "chat",
+      prompt_id: chat.prompt_id,
+      model: resolveChatModel(chat, env),
+      messages: chat.messages,
+      temperature: chat.temperature,
+      max_tokens: chat.max_tokens
+    }
+  }
+  const api = picked as PromptItemApi
+  return {
+    kind: api.kind,
+    prompt_id: api.prompt_id,
+    method: (api.method ?? "GET").toUpperCase() === "POST" ? "POST" : "GET",
+    path: api.path,
+    params: api.params,
+    body: api.body
+  }
+}
+
+function resolveChatModel(prompt: PromptItemChat, env: Env): string {
+  const m = typeof prompt.model === "string" ? prompt.model : ""
+  if (m && m !== "random") return m
+  const free = splitCsv(env.BRNOO_BLOCKRUN_MODELS_FREE)
+  const paid = splitCsv(env.BRNOO_BLOCKRUN_MODELS_PAID)
+  const ratio = env.BRNOO_BLOCKRUN_PAID_RATIO ?? defaultEnvValues.blockrunPaidRatio
+  const wantsPaid = Math.random() < ratio
+  if (wantsPaid && paid.length) return pickOne(paid)
+  if (!wantsPaid && free.length) return pickOne(free)
+  if (paid.length) return pickOne(paid)
+  if (free.length) return pickOne(free)
+  return env.BRNOO_BLOCKRUN_MODEL
+}
+
+function pickTaskKind(bank: PromptItem[], env: Env): TaskKind {
+  const available = new Set<TaskKind>()
+  for (const p of bank) available.add(((p as any).kind ?? "chat") as TaskKind)
+
+  const raw = env.BRNOO_TASK_KIND_WEIGHTS ?? defaultEnvValues.taskKindWeights
+  const weights = parseWeights(raw)
+  const candidates: Array<{ k: TaskKind; w: number }> = []
+  for (const k of ["chat", "surf", "predexon", "markets"] as TaskKind[]) {
+    if (!available.has(k)) continue
+    const w = weights[k] ?? 0
+    if (w > 0) candidates.push({ k, w })
+  }
+  if (!candidates.length) return "chat"
+  return pickWeightedKey(candidates)
+}
+
+function splitCsv(s?: string): string[] {
+  if (!s) return []
+  return s
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0)
+}
+
+function pickOne<T>(arr: T[]): T {
+  const i = Math.floor(Math.random() * arr.length)
+  return arr[i] as T
+}
+
+function parseWeights(s: string): Partial<Record<TaskKind, number>> {
+  const out: Partial<Record<TaskKind, number>> = {}
+  for (const part of s.split(",")) {
+    const [k0, v0] = part.split("=").map((x) => x.trim())
+    const k = k0 as TaskKind
+    if (k !== "chat" && k !== "surf" && k !== "predexon" && k !== "markets") continue
+    const n = Number(v0)
+    if (!Number.isFinite(n) || n <= 0) continue
+    out[k] = Math.floor(n)
+  }
+  return out
+}
+
+function pickWeightedKey(items: Array<{ k: TaskKind; w: number }>): TaskKind {
+  let total = 0
+  for (const it of items) total += it.w
+  let r = Math.random() * total
+  for (const it of items) {
+    r -= it.w
+    if (r <= 0) return it.k
+  }
+  return items[items.length - 1]?.k ?? "chat"
 }

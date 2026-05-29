@@ -128,17 +128,28 @@ node -e 'const fs=require("fs");const p="/var/lib/blockrunnooor/wallets/manifest
 
 每行一个 JSON，字段：
 - `prompt_id`：唯一 id，会作为 `task_type` 进入 Runs 记录
-- `messages`：OpenAI 兼容的 messages 数组
+- `kind`：任务类型（可选，默认 `chat`）；支持 `chat` / `surf` / `predexon` / `markets`
+- `messages`：OpenAI 兼容的 messages 数组（仅 `kind=chat` 使用）
+- `model`：可选；仅 `kind=chat` 使用
+  - 省略或写 `random`：按 env 的模型池与比例随机选择
+  - 写具体模型 id：直接使用该模型（例如 `deepseek/deepseek-chat`）
 - 可选：`temperature`、`max_tokens`
 
 说明：
-- Prompt Bank 不维护模型选择；运行时模型由环境变量 `BRNOO_BLOCKRUN_MODEL` 统一决定
+- `BRNOO_BLOCKRUN_MODEL` 仍作为兜底默认模型
+- 当 `model=random` 时，会结合：
+  - `BRNOO_BLOCKRUN_MODELS_FREE` / `BRNOO_BLOCKRUN_MODELS_PAID`
+  - `BRNOO_BLOCKRUN_PAID_RATIO`
+  自动选择免费/付费模型
 
 ```bash
 mkdir -p /etc/blockrunnooor
 cat >/etc/blockrunnooor/prompts.default.jsonl <<'EOF'
-{"prompt_id":"p001","messages":[{"role":"user","content":"用一句话解释 x402。"}],"temperature":0.2,"max_tokens":128}
-{"prompt_id":"p002","messages":[{"role":"user","content":"把下面这段话改写得更正式：Hello world"}],"temperature":0.7,"max_tokens":256}
+{"prompt_id":"p001","kind":"chat","model":"random","messages":[{"role":"user","content":"用一句话解释 x402。"}],"temperature":0.2,"max_tokens":128}
+{"prompt_id":"p002","kind":"chat","model":"deepseek/deepseek-chat","messages":[{"role":"user","content":"把下面这段话改写得更正式：Hello world"}],"temperature":0.7,"max_tokens":256}
+{"prompt_id":"surf_001","kind":"surf","method":"GET","path":"/v1/surf/market/ranking"}
+{"prompt_id":"pm_001","kind":"predexon","method":"GET","path":"/v1/pm/polymarket/events"}
+{"prompt_id":"mkt_001","kind":"markets","method":"GET","path":"/v1/stocks/us/price/AAPL"}
 EOF
 chmod 600 /etc/blockrunnooor/prompts.default.jsonl
 ```
