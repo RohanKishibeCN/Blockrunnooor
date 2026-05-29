@@ -1,4 +1,4 @@
-import type { ErrorType } from "../types"
+import type { ErrorType } from "../types.js"
 
 export type NotionUpsertResult =
   | { ok: true; page_id: string | null }
@@ -115,4 +115,3 @@ export function toNotionErrorType(e: unknown): ErrorType {
   }
   return "unknown"
 }
-

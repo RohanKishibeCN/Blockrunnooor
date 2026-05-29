@@ -1,6 +1,6 @@
 import { z } from "zod"
-import type { PromptItem } from "./types"
-import { readJsonlFile } from "./util/jsonl"
+import type { PromptItem } from "./types.js"
+import { readJsonlFile } from "./util/jsonl.js"
 
 const promptSchema = z.object({
   prompt_id: z.string().min(1),

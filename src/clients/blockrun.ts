@@ -1,5 +1,5 @@
 import { APIError, LLMClient, PaymentError, type ChatMessage, type ChatResponse } from "@blockrun/llm"
-import type { ErrorType } from "../types"
+import type { ErrorType } from "../types.js"
 
 export type BlockRunResponse = {
   ok: boolean
@@ -49,7 +49,8 @@ export class BlockRunClient {
       const after = client.getSpending()
 
       const latencyMs = Date.now() - start
-      const costUsd = Number.isFinite(after.totalUsd - before.totalUsd) ? after.totalUsd - before.totalUsd : null
+      const rawCost = after.totalUsd - before.totalUsd
+      const costUsd = Number.isFinite(rawCost) ? Math.max(0, rawCost) : null
 
       const usage = resp.usage
       const inputTokens = usage?.prompt_tokens ?? null
@@ -79,7 +80,15 @@ export class BlockRunClient {
       if (e instanceof APIError) {
         const status = e.statusCode
         const errorType: ErrorType =
-          status === 429 ? "rate_limit" : status >= 500 ? "upstream" : status >= 400 ? "validation" : "unknown"
+          status === 402
+            ? "budget"
+            : status === 429
+              ? "rate_limit"
+              : status >= 500
+                ? "upstream"
+                : status >= 400
+                  ? "validation"
+                  : "unknown"
         const msg = safeErrorMessage(e.response, e.message)
         return {
           ok: false,
@@ -87,7 +96,7 @@ export class BlockRunClient {
           latency_ms: latencyMs,
           json: e.response ?? null,
           error_type: errorType,
-          error_code: String(status),
+          error_code: status === 402 ? "payment_required" : String(status),
           error_message: msg,
           request_id: null,
           model: null,
@@ -156,7 +165,7 @@ function safeErrorMessage(response: unknown, fallback: string): string {
 
 function extractSettlementTx(resp: ChatResponse): string | null {
   const r = resp as unknown as Record<string, unknown>
-  const candidates = [r.settlement_tx, r.payment_receipt, r.paymentReceipt, r.tx, r.receipt]
+  const candidates = [r.settlement_tx, r.payment_receipt, r.paymentReceipt, r.txHash, r.tx, r.receipt]
   for (const c of candidates) {
     if (typeof c === "string" && c) return c
   }

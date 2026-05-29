@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "license": "MIT",
+  "type": "module",
   "engines": {
     "node": ">=20"
   },
@@ -14,7 +15,7 @@
     "generate-wallets": "node dist/tools/generate-wallets.js"
   },
   "dependencies": {
-    "@blockrun/llm": "^2.7.0",
+    "@blockrun/llm": "2.7.0",
     "better-sqlite3": "^11.10.0",
     "dotenv": "^16.5.0",
     "ethers": "^6.13.4",

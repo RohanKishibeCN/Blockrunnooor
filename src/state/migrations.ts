@@ -1,4 +1,4 @@
-import type { DB } from "./db"
+import type { DB } from "./db.js"
 
 export type Migration = {
   version: number

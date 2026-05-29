@@ -1,4 +1,4 @@
-import type { ExecutorOutput } from "../types"
+import type { ExecutorOutput } from "../types.js"
 
 function title(s: string): Record<string, unknown> {
   return { title: [{ type: "text", text: { content: s } }] }

@@ -1,6 +1,6 @@
-import type { ExecutorOutput } from "../types"
-import { NotionClient, NotionHttpError, safeErrorString } from "../clients/notion"
-import { buildCreatePayload, buildUpdatePayload } from "./runs"
+import type { ExecutorOutput } from "../types.js"
+import { NotionClient, NotionHttpError, safeErrorString } from "../clients/notion.js"
+import { buildCreatePayload, buildUpdatePayload } from "./runs.js"
 
 export type UpsertResult = {
   ok: boolean
@@ -41,4 +41,3 @@ export class NotionRecorder {
     }
   }
 }
-

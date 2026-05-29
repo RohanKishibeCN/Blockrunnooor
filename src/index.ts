@@ -1,10 +1,10 @@
-import { loadEnv } from "./config/env"
-import { logEvent } from "./logging"
-import { Orchestrator } from "./orchestrator/orchestrator"
-import { openDb } from "./state/db"
-import { applyMigrations } from "./state/migrations"
-import { StateRepo } from "./state/repo"
-import { nowEpoch } from "./util/time"
+import { loadEnv } from "./config/env.js"
+import { logEvent } from "./logging.js"
+import { Orchestrator } from "./orchestrator/orchestrator.js"
+import { openDb } from "./state/db.js"
+import { applyMigrations } from "./state/migrations.js"
+import { StateRepo } from "./state/repo.js"
+import { nowEpoch } from "./util/time.js"
 
 async function main(): Promise<void> {
   const dotenv = await import("dotenv")
@@ -41,7 +41,7 @@ main().catch((e) => {
 })
 
 async function loadAccountsFromEnv(env: ReturnType<typeof loadEnv>) {
-  const { accountConfigSchema, loadAccounts } = await import("./config/accounts")
+  const { accountConfigSchema, loadAccounts } = await import("./config/accounts.js")
   if (env.BRNOO_ACCOUNTS_JSON) {
     const parsed = JSON.parse(env.BRNOO_ACCOUNTS_JSON) as unknown
     if (!Array.isArray(parsed)) {
