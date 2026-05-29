@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "blockrunnooor",
       script: "dist/index.js",
-      cwd: "/opt/blockrunnooor",
+      cwd: __dirname,
       env: {
         BRNOO_ENV_FILE: "/etc/blockrunnooor/blockrunnooor.env"
       },
