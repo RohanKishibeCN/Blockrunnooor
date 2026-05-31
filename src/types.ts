@@ -2,6 +2,7 @@ export type ErrorType = "network" | "upstream" | "validation" | "budget" | "rate
 export type Decision = "blockrun" | "fallback" | "deny"
 export type RunStatus = "success" | "failed" | "skipped"
 export type ScheduleType = "cron" | "random" | "retry"
+export type TaskKind = "chat" | "surf" | "predexon" | "markets"
 
 export type ExecutorOutput = {
   run_id: string
@@ -30,12 +31,27 @@ export type ExecutorOutput = {
   created_at: string
 }
 
-export type PromptItem = {
+export type PromptItemChat = {
   prompt_id: string
+  kind?: "chat"
+  weight?: number
+  model?: string
   messages: unknown[]
   temperature?: number
   max_tokens?: number
 }
+
+export type PromptItemApi = {
+  prompt_id: string
+  kind: Exclude<TaskKind, "chat">
+  weight?: number
+  method?: "GET" | "POST"
+  path: string
+  params?: Record<string, unknown>
+  body?: Record<string, unknown>
+}
+
+export type PromptItem = PromptItemChat | PromptItemApi
 
 export type WalletManifestRecord = {
   wallet_id: string

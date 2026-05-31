@@ -1,4 +1,4 @@
-import { APIError, LLMClient, PaymentError, type ChatMessage, type ChatResponse } from "@blockrun/llm"
+import { APIError, BlockrunClient as GatewayClient, LLMClient, PaymentError, type ChatMessage } from "@blockrun/llm"
 import type { ErrorType } from "../types.js"
 
 export type BlockRunResponse = {
@@ -29,7 +29,16 @@ export class BlockRunClient {
     this.gateway = safeHostname(apiUrl)
   }
 
-  async call(_path: string, payload: Record<string, unknown>): Promise<BlockRunResponse> {
+  async call(path: string, payload: Record<string, unknown>): Promise<BlockRunResponse> {
+    if (Array.isArray(payload.messages)) return this.chat(payload)
+    const method = typeof payload.method === "string" ? payload.method.toUpperCase() : "GET"
+    const apiPath = typeof payload.path === "string" ? payload.path : path
+    const label = typeof payload.label === "string" ? payload.label : null
+    if (method === "POST") return this.post(apiPath, payload.body as Record<string, unknown> | undefined, label)
+    return this.get(apiPath, payload.params as Record<string, unknown> | undefined, label)
+  }
+
+  async chat(payload: Record<string, unknown>): Promise<BlockRunResponse> {
     const start = Date.now()
     const gateway = this.gateway
     try {
@@ -58,6 +67,7 @@ export class BlockRunClient {
 
       const effectiveModel = resp.fallback?.model ?? resp.model
       const settlementTx = extractSettlementTx(resp)
+      const requestId = extractRequestId(resp)
 
       return {
         ok: true,
@@ -67,7 +77,7 @@ export class BlockRunClient {
         error_type: null,
         error_code: null,
         error_message: null,
-        request_id: resp.id ?? null,
+        request_id: requestId,
         model: typeof effectiveModel === "string" ? effectiveModel : null,
         total_cost: typeof costUsd === "number" && Number.isFinite(costUsd) ? costUsd : null,
         input_tokens: typeof inputTokens === "number" && Number.isFinite(inputTokens) ? inputTokens : null,
@@ -90,6 +100,7 @@ export class BlockRunClient {
                   ? "validation"
                   : "unknown"
         const msg = safeErrorMessage(e.response, e.message)
+        const requestId = extractRequestId(e.response)
         return {
           ok: false,
           status_code: status,
@@ -98,7 +109,7 @@ export class BlockRunClient {
           error_type: errorType,
           error_code: status === 402 ? "payment_required" : String(status),
           error_message: msg,
-          request_id: null,
+          request_id: requestId,
           model: null,
           total_cost: null,
           input_tokens: null,
@@ -114,7 +125,7 @@ export class BlockRunClient {
           latency_ms: latencyMs,
           json: null,
           error_type: "budget",
-          error_code: "payment_error",
+          error_code: "payment_required",
           error_message: safeErrorMessage(null, e.message),
           request_id: null,
           model: null,
@@ -144,6 +155,128 @@ export class BlockRunClient {
       }
     }
   }
+
+  async get(path: string, params?: Record<string, unknown>, label?: string | null): Promise<BlockRunResponse> {
+    return this.callApi("GET", path, params, undefined, label)
+  }
+
+  async post(path: string, body?: Record<string, unknown>, label?: string | null): Promise<BlockRunResponse> {
+    return this.callApi("POST", path, undefined, body, label)
+  }
+
+  private async callApi(
+    method: "GET" | "POST",
+    path: string,
+    params?: Record<string, unknown>,
+    body?: Record<string, unknown>,
+    label?: string | null
+  ): Promise<BlockRunResponse> {
+    const start = Date.now()
+    const gateway = this.gateway
+    try {
+      const client = new GatewayClient({
+        privateKey: this.walletKey ?? undefined,
+        apiUrl: this.apiUrl,
+        timeout: this.timeoutSeconds * 1000
+      })
+
+      const before = client.getSpending()
+      const resp = method === "POST" ? await client.post(path, body) : await client.get(path, params as any)
+      const after = client.getSpending()
+
+      const latencyMs = Date.now() - start
+      const rawCost = after.totalUsd - before.totalUsd
+      const costUsd = Number.isFinite(rawCost) ? Math.max(0, rawCost) : null
+
+      const settlementTx = extractSettlementTx(resp)
+      const requestId = extractRequestId(resp)
+
+      return {
+        ok: true,
+        status_code: 200,
+        latency_ms: latencyMs,
+        json: resp,
+        error_type: null,
+        error_code: null,
+        error_message: null,
+        request_id: requestId,
+        model: label ? label.slice(0, 200) : null,
+        total_cost: typeof costUsd === "number" && Number.isFinite(costUsd) ? costUsd : null,
+        input_tokens: null,
+        output_tokens: null,
+        gateway,
+        settlement_tx: settlementTx
+      }
+    } catch (e) {
+      const latencyMs = Date.now() - start
+      if (e instanceof APIError) {
+        const status = e.statusCode
+        const errorType: ErrorType =
+          status === 402
+            ? "budget"
+            : status === 429
+              ? "rate_limit"
+              : status >= 500
+                ? "upstream"
+                : status >= 400
+                  ? "validation"
+                  : "unknown"
+        const msg = safeErrorMessage(e.response, e.message)
+        const requestId = extractRequestId(e.response)
+        return {
+          ok: false,
+          status_code: status,
+          latency_ms: latencyMs,
+          json: e.response ?? null,
+          error_type: errorType,
+          error_code: status === 402 ? "payment_required" : String(status),
+          error_message: msg,
+          request_id: requestId,
+          model: label ? label.slice(0, 200) : null,
+          total_cost: null,
+          input_tokens: null,
+          output_tokens: null,
+          gateway,
+          settlement_tx: null
+        }
+      }
+      if (e instanceof PaymentError) {
+        return {
+          ok: false,
+          status_code: 402,
+          latency_ms: latencyMs,
+          json: null,
+          error_type: "budget",
+          error_code: "payment_error",
+          error_message: safeErrorMessage(null, e.message),
+          request_id: null,
+          model: label ? label.slice(0, 200) : null,
+          total_cost: null,
+          input_tokens: null,
+          output_tokens: null,
+          gateway,
+          settlement_tx: null
+        }
+      }
+      const msg = e instanceof Error ? e.message : String(e)
+      return {
+        ok: false,
+        status_code: 0,
+        latency_ms: latencyMs,
+        json: null,
+        error_type: "network",
+        error_code: "request_error",
+        error_message: msg.slice(0, 200),
+        request_id: null,
+        model: label ? label.slice(0, 200) : null,
+        total_cost: null,
+        input_tokens: null,
+        output_tokens: null,
+        gateway,
+        settlement_tx: null
+      }
+    }
+  }
 }
 
 function safeHostname(url: string): string | null {
@@ -163,11 +296,39 @@ function safeErrorMessage(response: unknown, fallback: string): string {
   return (fallback || "error").slice(0, 200)
 }
 
-function extractSettlementTx(resp: ChatResponse): string | null {
-  const r = resp as unknown as Record<string, unknown>
+function extractSettlementTx(resp: unknown): string | null {
+  if (!resp || typeof resp !== "object") return null
+  const r = resp as Record<string, unknown>
   const candidates = [r.settlement_tx, r.payment_receipt, r.paymentReceipt, r.txHash, r.tx, r.receipt]
   for (const c of candidates) {
     if (typeof c === "string" && c) return c
+  }
+  const nestedCandidates = [r.settlement, r.payment, r.receipt]
+  for (const n of nestedCandidates) {
+    if (!n || typeof n !== "object") continue
+    const obj = n as Record<string, unknown>
+    const s = obj.txHash ?? obj.tx ?? obj.hash ?? obj.id
+    if (typeof s === "string" && s) return s
+  }
+  if (r.receipt && typeof r.receipt === "object") {
+    const rr = r.receipt as Record<string, unknown>
+    const tx = rr.transactionHash ?? rr.txHash
+    if (typeof tx === "string" && tx) return tx
+  }
+  return null
+}
+
+function extractRequestId(resp: unknown): string | null {
+  if (!resp || typeof resp !== "object") return null
+  const r = resp as Record<string, unknown>
+  const candidates = [r.request_id, r.requestId, r.id, r.trace_id, r.traceId]
+  for (const c of candidates) {
+    if (typeof c === "string" && c) return c.slice(0, 200)
+  }
+  if (r.meta && typeof r.meta === "object") {
+    const m = r.meta as Record<string, unknown>
+    const id = m.request_id ?? m.requestId ?? m.trace_id ?? m.traceId
+    if (typeof id === "string" && id) return id.slice(0, 200)
   }
   return null
 }

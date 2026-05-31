@@ -32,6 +32,10 @@ const envSchema = z.object({
   BRNOO_OUTBOX_POLL_SECONDS: z.coerce.number().int().positive().optional(),
 
   BRNOO_BLOCKRUN_MODEL: z.string().min(1),
+  BRNOO_BLOCKRUN_MODELS_FREE: z.string().min(1).optional(),
+  BRNOO_BLOCKRUN_MODELS_PAID: z.string().min(1).optional(),
+  BRNOO_BLOCKRUN_PAID_RATIO: z.coerce.number().min(0).max(1).optional(),
+  BRNOO_TASK_KIND_WEIGHTS: z.string().min(1).optional(),
   BLOCKRUN_API_URL: z.string().min(1),
   BLOCKRUN_CHAT_PATH: z.string().min(1),
   BLOCKRUN_TIMEOUT_SECONDS: z.coerce.number().int().positive().optional(),
@@ -79,5 +83,9 @@ export const defaultEnvValues = {
   outboxPollSeconds: 10,
   blockrunTimeoutSeconds: 30,
   notionTimeoutSeconds: 15,
+  notionRetryBackoffBaseSeconds: 2,
+  notionRetryBackoffMaxSeconds: 300,
+  blockrunPaidRatio: 0.5,
+  taskKindWeights: "chat=100",
   logLevel: "info" as const
 }

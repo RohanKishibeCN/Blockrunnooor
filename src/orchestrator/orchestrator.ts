@@ -4,9 +4,9 @@ import { BlockRunClient } from "../clients/blockrun.js"
 import { NotionClient, backoffSeconds } from "../clients/notion.js"
 import { logEvent } from "../logging.js"
 import { NotionRecorder } from "../notion/recorder.js"
-import { loadPromptBank, pickRandomPrompt } from "../prompt-bank.js"
+import { loadPromptBank, pickWeightedPrompt } from "../prompt-bank.js"
 import { StateRepo } from "../state/repo.js"
-import type { Decision, ExecutorOutput, ErrorType, ScheduleType } from "../types.js"
+import type { Decision, ExecutorOutput, ErrorType, PromptItem, PromptItemApi, PromptItemChat, ScheduleType, TaskKind } from "../types.js"
 import { loadWalletManifest } from "../wallet-manifest.js"
 import { decide } from "../router/decision.js"
 import { Semaphore } from "../util/semaphore.js"
@@ -23,6 +23,24 @@ type TaskSpec = {
   attempt: number
   backoff_seconds: number
 }
+
+type PlannedTask =
+  | {
+      kind: "chat"
+      prompt_id: string
+      model?: string
+      messages: unknown[]
+      temperature?: number
+      max_tokens?: number
+    }
+  | {
+      kind: Exclude<TaskKind, "chat">
+      prompt_id: string
+      method: "GET" | "POST"
+      path: string
+      params?: Record<string, unknown>
+      body?: Record<string, unknown>
+    }
 
 export class Orchestrator {
   private running = true
@@ -142,11 +160,11 @@ export class Orchestrator {
           const scheduledAt = earliest + jitter
           if (scheduledAt > tickStart) continue
 
-          const prompt = pickRandomPrompt(promptBank)
+          const task = planTask(promptBank, this.env)
           const spec: TaskSpec = {
             account_id: account.account_id,
             wallet_id: walletId,
-            task_type: prompt.prompt_id,
+            task_type: task.prompt_id,
             schedule_type: "cron",
             scheduled_at: scheduledAt,
             jitter_seconds: jitter,
@@ -155,7 +173,7 @@ export class Orchestrator {
           }
 
           this.repo.touchWalletLastRun(account.account_id, walletId, tickStart)
-          void this.runOnce(spec, prompt)
+          void this.runOnce(spec, task)
         }
       }
 
@@ -165,7 +183,7 @@ export class Orchestrator {
     }
   }
 
-  private async runOnce(spec: TaskSpec, prompt: { messages: unknown[]; temperature?: number; max_tokens?: number }): Promise<void> {
+  private async runOnce(spec: TaskSpec, task: PlannedTask): Promise<void> {
     const runningKey = `${spec.account_id}:${spec.wallet_id}`
     if (this.walletsRunning.has(runningKey)) return
     this.walletsRunning.add(runningKey)
@@ -212,14 +230,23 @@ export class Orchestrator {
       const brTimeout = this.env.BLOCKRUN_TIMEOUT_SECONDS ?? defaultEnvValues.blockrunTimeoutSeconds
       const client = new BlockRunClient(this.env.BLOCKRUN_API_URL, walletKey, brTimeout)
 
-      const payload: Record<string, unknown> = {
-        model: this.env.BRNOO_BLOCKRUN_MODEL,
-        messages: prompt.messages
+      const payload: Record<string, unknown> = {}
+      let path = this.env.BLOCKRUN_CHAT_PATH
+      if (task.kind === "chat") {
+        payload.model = resolveChatModel(task.model, runId, this.env)
+        payload.messages = task.messages
+        if (typeof task.temperature === "number") payload.temperature = task.temperature
+        if (typeof task.max_tokens === "number") payload.max_tokens = task.max_tokens
+      } else {
+        path = task.path
+        payload.method = task.method
+        payload.path = task.path
+        payload.params = task.params
+        payload.body = task.body
+        payload.label = `${task.kind}:${task.path}`
       }
-      if (typeof prompt.temperature === "number") payload.temperature = prompt.temperature
-      if (typeof prompt.max_tokens === "number") payload.max_tokens = prompt.max_tokens
 
-      const resp = await client.call(this.env.BLOCKRUN_CHAT_PATH, payload)
+      const resp = await client.call(path, payload)
       const out = makeExecutorOutput(runId, spec, attempt, resp, maskAddress(wallet.address))
 
       await this.recordAndUpdate(bucket, out, idx?.notion_page_id ?? null)
@@ -263,7 +290,7 @@ export class Orchestrator {
           attempt: attempt + 1,
           backoff_seconds: bo
         }
-        setTimeout(() => void this.runOnce(retrySpec, prompt), bo * 1000)
+        setTimeout(() => void this.runOnce(retrySpec, task), bo * 1000)
       }
     } finally {
       releaseWallet()
@@ -310,8 +337,8 @@ export class Orchestrator {
 
     if (!res.ok && res.retryable) {
       const now = nowEpoch()
-      const backoffBase = this.env.NOTION_RETRY_BACKOFF_BASE_SECONDS ?? 2
-      const backoffMax = this.env.NOTION_RETRY_BACKOFF_MAX_SECONDS ?? 300
+      const backoffBase = this.env.NOTION_RETRY_BACKOFF_BASE_SECONDS ?? defaultEnvValues.notionRetryBackoffBaseSeconds
+      const backoffMax = this.env.NOTION_RETRY_BACKOFF_MAX_SECONDS ?? defaultEnvValues.notionRetryBackoffMaxSeconds
       const nextRetry = now + backoffSeconds(backoffBase, 1, Math.min(60, backoffMax))
       this.repo.enqueueOutbox(out.account_id, out.run_id, JSON.stringify(out), nextRetry, 1, res.error)
       logEvent("warn", "notion_upsert_failed", { run_id: out.run_id, error: res.error, retryable: true })
@@ -347,8 +374,8 @@ export class Orchestrator {
             this.repo.deleteOutboxItem(item.id)
             continue
           }
-          const backoffBase = this.env.NOTION_RETRY_BACKOFF_BASE_SECONDS ?? 2
-          const backoffMax = this.env.NOTION_RETRY_BACKOFF_MAX_SECONDS ?? 300
+          const backoffBase = this.env.NOTION_RETRY_BACKOFF_BASE_SECONDS ?? defaultEnvValues.notionRetryBackoffBaseSeconds
+          const backoffMax = this.env.NOTION_RETRY_BACKOFF_MAX_SECONDS ?? defaultEnvValues.notionRetryBackoffMaxSeconds
           const nextRetry = now + backoffSeconds(backoffBase, item.attempt + 1, backoffMax)
           this.repo.updateOutboxItem(item.id, nextRetry, item.attempt + 1, res.error)
         }
@@ -465,4 +492,102 @@ function safeHostname(url: string): string | null {
   } catch {
     return null
   }
+}
+
+function planTask(bank: PromptItem[], env: Env): PlannedTask {
+  const kind = pickTaskKind(bank, env)
+  const candidates = bank.filter((p) => ((p as any).kind ?? "chat") === kind)
+  const picked = pickWeightedPrompt(candidates.length ? candidates : bank) as PromptItem
+  const pKind = ((picked as any).kind ?? "chat") as TaskKind
+  if (pKind === "chat") {
+    const chat = picked as PromptItemChat
+    return {
+      kind: "chat",
+      prompt_id: chat.prompt_id,
+      model: chat.model,
+      messages: chat.messages,
+      temperature: chat.temperature,
+      max_tokens: chat.max_tokens
+    }
+  }
+  const api = picked as PromptItemApi
+  return {
+    kind: api.kind,
+    prompt_id: api.prompt_id,
+    method: (api.method ?? "GET").toUpperCase() === "POST" ? "POST" : "GET",
+    path: api.path,
+    params: api.params,
+    body: api.body
+  }
+}
+
+function resolveChatModel(requestedModel: string | undefined, runId: string, env: Env): string {
+  const m = typeof requestedModel === "string" ? requestedModel : ""
+  if (m && m !== "random") return m
+
+  const free = splitCsv(env.BRNOO_BLOCKRUN_MODELS_FREE)
+  const paid = splitCsv(env.BRNOO_BLOCKRUN_MODELS_PAID)
+  const ratio = env.BRNOO_BLOCKRUN_PAID_RATIO ?? defaultEnvValues.blockrunPaidRatio
+  const paidThreshold = Math.max(0, Math.min(1, ratio))
+  const wantsPaid = stableJitter(`${runId}|paid`, 9999) < Math.floor(paidThreshold * 10000)
+
+  if (wantsPaid && paid.length) return pickStable(`${runId}|paidModel`, paid)
+  if (!wantsPaid && free.length) return pickStable(`${runId}|freeModel`, free)
+  if (paid.length) return pickStable(`${runId}|paidFallback`, paid)
+  if (free.length) return pickStable(`${runId}|freeFallback`, free)
+  return env.BRNOO_BLOCKRUN_MODEL
+}
+
+function pickTaskKind(bank: PromptItem[], env: Env): TaskKind {
+  const available = new Set<TaskKind>()
+  for (const p of bank) available.add(((p as any).kind ?? "chat") as TaskKind)
+
+  const raw = env.BRNOO_TASK_KIND_WEIGHTS ?? defaultEnvValues.taskKindWeights
+  const weights = parseWeights(raw)
+  const items: Array<{ k: TaskKind; w: number }> = []
+  for (const k of ["chat", "surf", "predexon", "markets"] as TaskKind[]) {
+    if (!available.has(k)) continue
+    const w = weights[k] ?? 0
+    if (w > 0) items.push({ k, w })
+  }
+  if (!items.length) return "chat"
+  return pickWeightedKey(items)
+}
+
+function splitCsv(s?: string): string[] {
+  if (!s) return []
+  return s
+    .split(",")
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0)
+}
+
+function parseWeights(s: string): Partial<Record<TaskKind, number>> {
+  const out: Partial<Record<TaskKind, number>> = {}
+  for (const part of s.split(",")) {
+    const [k0, v0] = part.split("=").map((x) => x.trim())
+    const k = k0 as TaskKind
+    if (k !== "chat" && k !== "surf" && k !== "predexon" && k !== "markets") continue
+    const n = Number(v0)
+    if (!Number.isFinite(n) || n <= 0) continue
+    out[k] = Math.floor(n)
+  }
+  return out
+}
+
+function pickWeightedKey(items: Array<{ k: TaskKind; w: number }>): TaskKind {
+  let total = 0
+  for (const it of items) total += it.w
+  let r = Math.random() * total
+  for (const it of items) {
+    r -= it.w
+    if (r <= 0) return it.k
+  }
+  return items[items.length - 1]?.k ?? "chat"
+}
+
+function pickStable(key: string, arr: string[]): string {
+  if (!arr.length) return ""
+  const i = stableJitter(key, Math.max(0, arr.length - 1))
+  return arr[i] as string
 }

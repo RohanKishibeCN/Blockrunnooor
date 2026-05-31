@@ -27,6 +27,15 @@
   - 生成 run_id 的盐（不要泄漏）
 - `BRNOO_BLOCKRUN_MODEL`
   - 全局单模型配置；每次 run 都使用该模型 id（例如 `deepseek/deepseek-chat`、`openai/gpt-5.5`、`nvidia/gpt-oss-120b`）
+- `BRNOO_BLOCKRUN_MODELS_FREE`
+  - 可选；逗号分隔的免费模型池（例如 `nvidia/gpt-oss-120b,nvidia/deepseek-v4-flash`）
+  - 当 Prompt 的 `model` 为空或为 `random` 时，会按池子随机选模型
+- `BRNOO_BLOCKRUN_MODELS_PAID`
+  - 可选；逗号分隔的付费模型池（例如 `deepseek/deepseek-chat,openai/gpt-5.4-nano`）
+- `BRNOO_BLOCKRUN_PAID_RATIO`
+  - 可选；当 `model=random` 时，从付费池取模型的概率（0~1，例如 `0.5`）
+- `BRNOO_TASK_KIND_WEIGHTS`
+  - 可选；任务类型权重（例如 `chat=40,surf=20,predexon=20,markets=20`）
 - `BLOCKRUN_API_URL`
   - 例如 `https://blockrun.ai/api`
 - `BLOCKRUN_CHAT_PATH`

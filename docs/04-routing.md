@@ -9,7 +9,7 @@
 ## 何时走 BlockRun（建议）
 - 默认全部先尝试 BlockRun
 - 若 BlockRun 未触发熔断且钱包预算允许：继续优先
-- 模型选择统一由环境变量 `BRNOO_BLOCKRUN_MODEL` 决定；Prompt Bank 只维护 messages，不维护 model
+- `BRNOO_BLOCKRUN_MODEL` 作为兜底默认模型；Prompt Bank 的 `model` 可省略或写 `random`，由模型池与比例决定最终模型
 
 ## 何时 fallback 到自有 Kimi（建议）
 - BlockRun 不可用错误（网络超时、5xx、网关不可用）
