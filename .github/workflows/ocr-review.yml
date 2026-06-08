@@ -66,15 +66,20 @@ jobs:
           node-version: '20'
 
       - name: Install OpenCodeReview
-        run: npm install -g @alibaba-group/open-code-review
+        run: npm install -g @alibaba-group/open-code-review@latest
+
+      - name: Check OCR version
+        run: ocr version
 
       - name: Configure OCR
+        env:
+          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+          OCR_LLM_AUTH_TOKEN: ${{ secrets.OCR_LLM_AUTH_TOKEN }}
+          OCR_LLM_MODEL: ${{ secrets.OCR_LLM_MODEL }}
         run: |
-          ocr config set llm.url ${{ secrets.OCR_LLM_URL }}
-          ocr config set llm.auth_token ${{ secrets.OCR_LLM_AUTH_TOKEN }}
-          ocr config set llm.model ${{ secrets.OCR_LLM_MODEL }}
-          ocr config set llm.use_anthropic ${{ secrets.OCR_LLM_USE_ANTHROPIC }}
-          ocr config set llm.extra_body '{"thinking": {"type": "disabled"}}'
+          ocr config set llm.url "$OCR_LLM_URL"
+          ocr config set llm.auth_token "$OCR_LLM_AUTH_TOKEN"
+          ocr config set llm.model "$OCR_LLM_MODEL"
 
       - name: Run OpenCodeReview
         id: review
