@@ -2,7 +2,32 @@ export type ErrorType = "network" | "upstream" | "validation" | "budget" | "rate
 export type Decision = "blockrun" | "fallback" | "deny"
 export type RunStatus = "success" | "failed" | "skipped"
 export type ScheduleType = "cron" | "random" | "retry"
-export type TaskKind = "chat" | "surf" | "predexon" | "markets"
+export type TaskKind =
+  | "chat"
+  | "predexon"
+  | "search"
+  | "exa"
+  | "modal"
+  | "usstock"
+  | "stocks"
+  | "crypto"
+  | "fx"
+  | "commodity"
+
+export const TASK_KIND_LABELS: Record<TaskKind, string> = {
+  chat: "AI Chat",
+  predexon: "Prediction Markets",
+  search: "Web Search",
+  exa: "Exa Search",
+  modal: "Sandbox Compute",
+  usstock: "US Stock",
+  stocks: "Global Stock",
+  crypto: "Crypto",
+  fx: "FX",
+  commodity: "Commodity"
+}
+
+export const API_KINDS: TaskKind[] = ["predexon", "search", "exa", "modal", "usstock", "stocks", "crypto", "fx", "commodity"]
 
 export type ExecutorOutput = {
   run_id: string

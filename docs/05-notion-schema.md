@@ -26,7 +26,8 @@
 - error_code -> 文本 -> 可选
 - error_message -> 文本 -> 脱敏后的简述
 - orchestrator_version -> 文本 -> 便于回溯
-- executor_host -> 文本 -> 机器名（可选）
+- executor_host -> 文本 -> 机器名
+- request_id -> 文本 -> 可选；上游返回的追踪 id
 
 ## 可选表：Wallets（状态表）
 用途：预算、冷却、风险状态。

@@ -6,7 +6,7 @@ import { logEvent } from "../logging.js"
 import { NotionRecorder } from "../notion/recorder.js"
 import { loadPromptBank, pickWeightedPrompt } from "../prompt-bank.js"
 import { StateRepo } from "../state/repo.js"
-import type { Decision, ExecutorOutput, ErrorType, PromptItem, PromptItemApi, PromptItemChat, ScheduleType, TaskKind } from "../types.js"
+import { API_KINDS, type Decision, type ExecutorOutput, type ErrorType, type PromptItem, type PromptItemApi, type PromptItemChat, type ScheduleType, type TaskKind } from "../types.js"
 import { loadWalletManifest } from "../wallet-manifest.js"
 import { decide } from "../router/decision.js"
 import { Semaphore } from "../util/semaphore.js"
@@ -247,6 +247,19 @@ export class Orchestrator {
       }
 
       const resp = await client.call(path, payload)
+      if (!resp.ok) {
+        logEvent("warn", "blockrun_call_failed", {
+          run_id: runId,
+          account_id: spec.account_id,
+          wallet_id: spec.wallet_id,
+          kind: task.kind,
+          method: typeof payload.method === "string" ? payload.method : "GET",
+          path,
+          status_code: resp.status_code,
+          error_type: resp.error_type,
+          error_message: resp.error_message
+        })
+      }
       const out = makeExecutorOutput(runId, spec, attempt, resp, maskAddress(wallet.address))
 
       await this.recordAndUpdate(bucket, out, idx?.notion_page_id ?? null)
@@ -496,9 +509,9 @@ function safeHostname(url: string): string | null {
 
 function planTask(bank: PromptItem[], env: Env): PlannedTask {
   const kind = pickTaskKind(bank, env)
-  const candidates = bank.filter((p) => ((p as any).kind ?? "chat") === kind)
+  const candidates = bank.filter((p) => promptKind(p) === kind)
   const picked = pickWeightedPrompt(candidates.length ? candidates : bank) as PromptItem
-  const pKind = ((picked as any).kind ?? "chat") as TaskKind
+  const pKind = promptKind(picked)
   if (pKind === "chat") {
     const chat = picked as PromptItemChat
     return {
@@ -521,6 +534,11 @@ function planTask(bank: PromptItem[], env: Env): PlannedTask {
   }
 }
 
+function promptKind(p: PromptItem): TaskKind {
+  if ((p as PromptItemChat).kind === undefined || (p as PromptItemChat).kind === "chat") return "chat"
+  return (p as PromptItemApi).kind
+}
+
 function resolveChatModel(requestedModel: string | undefined, runId: string, env: Env): string {
   const m = typeof requestedModel === "string" ? requestedModel : ""
   if (m && m !== "random") return m
@@ -540,12 +558,14 @@ function resolveChatModel(requestedModel: string | undefined, runId: string, env
 
 function pickTaskKind(bank: PromptItem[], env: Env): TaskKind {
   const available = new Set<TaskKind>()
-  for (const p of bank) available.add(((p as any).kind ?? "chat") as TaskKind)
+  for (const p of bank) available.add(promptKind(p))
 
   const raw = env.BRNOO_TASK_KIND_WEIGHTS ?? defaultEnvValues.taskKindWeights
   const weights = parseWeights(raw)
   const items: Array<{ k: TaskKind; w: number }> = []
-  for (const k of ["chat", "surf", "predexon", "markets"] as TaskKind[]) {
+
+  const allKinds: TaskKind[] = ["chat" as const, ...API_KINDS]
+  for (const k of allKinds) {
     if (!available.has(k)) continue
     const w = weights[k] ?? 0
     if (w > 0) items.push({ k, w })
@@ -563,11 +583,12 @@ function splitCsv(s?: string): string[] {
 }
 
 function parseWeights(s: string): Partial<Record<TaskKind, number>> {
+  const validKinds = new Set<string>(["chat", ...API_KINDS])
   const out: Partial<Record<TaskKind, number>> = {}
   for (const part of s.split(",")) {
     const [k0, v0] = part.split("=").map((x) => x.trim())
     const k = k0 as TaskKind
-    if (k !== "chat" && k !== "surf" && k !== "predexon" && k !== "markets") continue
+    if (!k0 || !validKinds.has(k0)) continue
     const n = Number(v0)
     if (!Number.isFinite(n) || n <= 0) continue
     out[k] = Math.floor(n)

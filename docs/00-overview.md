@@ -10,6 +10,7 @@
 - 钱包强隔离：每个钱包密钥独立、预算独立、限速独立、失败隔离
 - 账号分组（account）：在同一套 Notion Runs 表中支持多个账号/业务分组；每个账号有独立的钱包集合与预算/熔断/调度状态
 - 调度策略：定时 + 抖动、随机触发、并发上限、重试/退避、限速与风控
+- 多任务类型：覆盖 BlockRun 完整 API 矩阵 — chat（50+ 模型）/ predexon（预测市场）/ search & exa（搜索）/ usstock & stocks & crypto & fx & commodity（金融行情）/ modal（沙盒计算）
 - 路由策略：BlockRun 优先；必要时自有 Kimi K2.6 兜底；每次 run 全量记录渠道/模型/成本/错误
 - Notion 记录：Runs 为核心事实表；可选 Wallets/Errors；幂等键去重避免重试重复计数
 - 部署运维：pm2 常驻；可观察性（日志/指标）；可回滚升级

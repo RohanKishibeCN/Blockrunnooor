@@ -32,7 +32,7 @@
 ## 风控与限速
 - 每钱包 QPS 限制（例如 0.1~0.2）
 - 全局 QPS 限制（避免触发上游风控）
-- 任务类型分级：高风险/高成本任务更保守调度
+- 任务类型分级：高成本任务（predexon tier2、modal 沙盒）采用更保守调度；免费 list 类（usstock/list、crypto/list 等）可高频轮询
 
 ## 记录字段（建议）
 - schedule_type：cron / random / retry

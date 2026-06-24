@@ -12,8 +12,20 @@ const chatSchema = z.object({
   max_tokens: z.number().int().positive().optional()
 })
 
+const apiKindEnum = z.enum([
+  "predexon",
+  "search",
+  "exa",
+  "modal",
+  "usstock",
+  "stocks",
+  "crypto",
+  "fx",
+  "commodity"
+])
+
 const apiSchema = z.object({
-  kind: z.enum(["surf", "predexon", "markets"]),
+  kind: apiKindEnum,
   prompt_id: z.string().min(1),
   weight: z.number().int().positive().optional(),
   method: z.enum(["GET", "POST"]).optional(),

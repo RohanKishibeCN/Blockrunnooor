@@ -26,16 +26,20 @@
 - `BRNOO_RUN_ID_SALT`
   - 生成 run_id 的盐（不要泄漏）
 - `BRNOO_BLOCKRUN_MODEL`
-  - 全局单模型配置；每次 run 都使用该模型 id（例如 `deepseek/deepseek-chat`、`openai/gpt-5.5`、`nvidia/gpt-oss-120b`）
+  - 全局单模型配置；每次 run 都使用该模型 id（例如 `deepseek/deepseek-chat`、`openai/gpt-5.5`、`nvidia/deepseek-v4-flash`）
+  - 注意：请勿使用已下线的模型（如 `nvidia/gpt-oss-120b`），建议通过 `GET /api/v1/models` 获取最新模型列表
 - `BRNOO_BLOCKRUN_MODELS_FREE`
-  - 可选；逗号分隔的免费模型池（例如 `nvidia/gpt-oss-120b,nvidia/deepseek-v4-flash`）
+  - 可选；逗号分隔的免费模型池（例如 `nvidia/deepseek-v4-flash,nvidia/qwen3-coder-480b,nvidia/mistral-small-4-119b`）
+  - 完整免费模型清单通过 `GET https://blockrun.ai/api/v1/models` 获取，筛选 `billing_mode=free`
   - 当 Prompt 的 `model` 为空或为 `random` 时，会按池子随机选模型
 - `BRNOO_BLOCKRUN_MODELS_PAID`
-  - 可选；逗号分隔的付费模型池（例如 `deepseek/deepseek-chat,openai/gpt-5.4-nano`）
+  - 可选；逗号分隔的付费模型池（例如 `deepseek/deepseek-chat,openai/gpt-5.4-nano,google/gemini-2.5-flash-lite`）
 - `BRNOO_BLOCKRUN_PAID_RATIO`
-  - 可选；当 `model=random` 时，从付费池取模型的概率（0~1，例如 `0.5`）
+  - 可选；当 `model=random` 时，从付费池取模型的概率（0~1，例如 `0.3`）
 - `BRNOO_TASK_KIND_WEIGHTS`
-  - 可选；任务类型权重（例如 `chat=40,surf=20,predexon=20,markets=20`）
+  - 可选；任务类型权重（例如 `chat=60,predexon=10,search=10,crypto=10,fx=5,commodity=5`）
+  - 支持的 kind：`chat`, `predexon`, `search`, `exa`, `modal`, `usstock`, `stocks`, `crypto`, `fx`, `commodity`
+  - 各 kind 对应的 BlockRun API 路径详见操作手册
 - `BLOCKRUN_API_URL`
   - 例如 `https://blockrun.ai/api`
 - `BLOCKRUN_CHAT_PATH`

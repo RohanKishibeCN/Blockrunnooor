@@ -128,15 +128,25 @@ node -e 'const fs=require("fs");const p="/var/lib/blockrunnooor/wallets/manifest
 
 每行一个 JSON，字段：
 - `prompt_id`：唯一 id，会作为 `task_type` 进入 Runs 记录
-- `kind`：任务类型（可选，默认 `chat`）；支持 `chat` / `surf` / `predexon` / `markets`
+- `kind`：任务类型（可选，默认 `chat`）；支持的 kind 对应 BlockRun 官方 API 分类：
+  - `chat` — AI Chat（OpenAI 兼容接口）
+  - `predexon` — 预测市场（Predexon 透传，`/v1/pm/{path}`）
+  - `search` — 网页搜索（Exa 搜索，`/v1/search`）
+  - `exa` — Exa 原始透传（`/v1/exa/{path}`）
+  - `modal` — 沙盒计算（`/v1/modal/sandbox/*`）
+  - `usstock` — 美股行情（`/v1/usstock/*`）
+  - `stocks` — 全球股票行情（`/v1/stocks/{market}/*`）
+  - `crypto` — 加密货币行情（`/v1/crypto/*`）
+  - `fx` — 外汇行情（`/v1/fx/*`）
+  - `commodity` — 大宗商品行情（`/v1/commodity/*`）
 - `messages`：OpenAI 兼容的 messages 数组（仅 `kind=chat` 使用）
 - `model`：可选；仅 `kind=chat` 使用
   - 省略或写 `random`：按 env 的模型池与比例随机选择
   - 写具体模型 id：直接使用该模型（例如 `deepseek/deepseek-chat`）
 - 可选：`temperature`、`max_tokens`（仅 `kind=chat` 使用）
-- `method`：可选；仅 `kind=surf/predexon/markets` 使用（默认 `GET`）
-- `path`：必填；仅 `kind=surf/predexon/markets` 使用（例如 `/v1/surf/market/ranking`）
-- `params` / `body`：可选；仅 `kind=surf/predexon/markets` 使用
+- `method`：可选；非 chat 类使用（默认 `GET`）
+- `path`：必填；非 chat 类使用，路径前缀不含 `/api`（因为 `BLOCKRUN_API_URL` 已包含）
+- `params` / `body`：可选；非 chat 类使用
 
 说明：
 - `BRNOO_BLOCKRUN_MODEL` 作为兜底默认模型
@@ -144,27 +154,38 @@ node -e 'const fs=require("fs");const p="/var/lib/blockrunnooor/wallets/manifest
   - `BRNOO_BLOCKRUN_MODELS_FREE` / `BRNOO_BLOCKRUN_MODELS_PAID`
   - `BRNOO_BLOCKRUN_PAID_RATIO`
   自动选择免费/付费模型
-- 当 `kind` 为 `surf/predexon/markets` 时，程序会直接调用对应的 marketplace endpoint（每次按 x402 计费）
+- 当前免费模型池（来源：`GET /api/v1/models`）：
+  - `nvidia/deepseek-v4-flash`
+  - `nvidia/qwen3-coder-480b`
+  - `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning`
+  - `nvidia/llama-4-maverick`
+  - `nvidia/qwen3-next-80b-a3b-thinking`
+  - `nvidia/mistral-small-4-119b`
+- 非 chat 类调用通过 BlockRun 的 x402 Gateway 透传到对应服务，自动完成 x402 支付
 
 ```bash
 mkdir -p /etc/blockrunnooor
 cat >/etc/blockrunnooor/prompts.default.jsonl <<'EOF'
 {"prompt_id":"p001","kind":"chat","model":"random","messages":[{"role":"user","content":"用一句话解释 x402。"}],"temperature":0.2,"max_tokens":128}
 {"prompt_id":"p002","kind":"chat","model":"deepseek/deepseek-chat","messages":[{"role":"user","content":"把下面这段话改写得更正式：Hello world"}],"temperature":0.7,"max_tokens":256}
-{"prompt_id":"surf_001","kind":"surf","method":"GET","path":"/v1/surf/market/ranking"}
-{"prompt_id":"pm_001","kind":"predexon","method":"GET","path":"/v1/pm/polymarket/events"}
-{"prompt_id":"mkt_001","kind":"markets","method":"GET","path":"/v1/stocks/us/price/AAPL"}
+{"prompt_id":"pm_001","kind":"predexon","method":"GET","path":"/v1/pm/polymarket/markets"}
+{"prompt_id":"pm_002","kind":"predexon","method":"GET","path":"/v1/pm/polymarket/events/trump-inauguration"}
+{"prompt_id":"us_001","kind":"usstock","method":"GET","path":"/v1/usstock/price/AAPL"}
+{"prompt_id":"us_002","kind":"usstock","method":"GET","path":"/v1/usstock/history/AAPL"}
+{"prompt_id":"crypto_001","kind":"crypto","method":"GET","path":"/v1/crypto/price/BTC"}
+{"prompt_id":"fx_001","kind":"fx","method":"GET","path":"/v1/fx/price/EURUSD"}
+{"prompt_id":"cmdt_001","kind":"commodity","method":"GET","path":"/v1/commodity/price/GOLD"}
+{"prompt_id":"search_001","kind":"search","method":"POST","path":"/v1/search","body":{"query":"latest AI news"}}
 EOF
 chmod 600 /etc/blockrunnooor/prompts.default.jsonl
 ```
 
 建议把 Prompt Bank 扩充到 100 条以减少重复与风控相关性，并覆盖不同输出形态（短答/长文/结构化 JSON）。推荐配比：
-- 20：摘要/改写/压缩
-- 20：信息抽取/结构化（偏 JSON 输出）
-- 15：翻译/双语/术语
-- 15：分类/打标/置信度
-- 15：推理/多步
-- 15：代码相关
+- 50：chat 类（摘要/改写/翻译/分类/推理/代码）
+- 10：predexon（预测市场数据）
+- 10：search / exa（搜索）
+- 15：金融行情（usstock/crypto/fx/commodity，免费 list + 付费 price/history）
+- 15：其他（modal 沙盒等）
 
 ## 6. 环境变量配置（全部可调参入口）
 
@@ -193,13 +214,19 @@ nano /etc/blockrunnooor/blockrunnooor.env
 - `BRNOO_ACCOUNTS_JSON`：账号配置 JSON 数组字符串（与 `BRNOO_ACCOUNTS_DIR` 二选一）
 
 BlockRun：
-- `BRNOO_BLOCKRUN_MODEL`：必填，全局单模型 id（例如 `deepseek/deepseek-chat` / `openai/gpt-5.5` / `nvidia/gpt-oss-120b`）
+- `BRNOO_BLOCKRUN_MODEL`：必填，全局兜底默认模型 id（例如 `nvidia/deepseek-v4-flash` / `deepseek/deepseek-chat`）
+- `BRNOO_BLOCKRUN_MODELS_FREE`：可选，免费模型池，逗号分隔（例如 `nvidia/deepseek-v4-flash,nvidia/qwen3-coder-480b,nvidia/mistral-small-4-119b`）
+  - 建议通过 `curl https://blockrun.ai/api/v1/models | jq '.data[] | select(.billing_mode=="free") | .id'` 获取当前免费模型列表
+- `BRNOO_BLOCKRUN_MODELS_PAID`：可选，付费模型池，逗号分隔（例如 `deepseek/deepseek-chat,openai/gpt-5.4-nano,google/gemini-2.5-flash-lite`）
+- `BRNOO_BLOCKRUN_PAID_RATIO`：可选，付费池选中概率 0~1（默认 0.3）
+- `BRNOO_TASK_KIND_WEIGHTS`：可选，任务类型权重（例如 `chat=60,predexon=10,search=10,crypto=10,fx=5,commodity=5`）
 - `BLOCKRUN_API_URL`：必填，例如 `https://blockrun.ai/api`
 - `BLOCKRUN_CHAT_PATH`：必填，例如 `/v1/chat/completions`
 - `BLOCKRUN_TIMEOUT_SECONDS`：可选，默认 30
 - `BLOCKRUN_WALLET_KEY`：可选，全局 wallet key（不推荐用于多钱包；多钱包建议在 manifest 写 `private_key` 或 `secret_ref`）
 说明：
 - `BLOCKRUN_CHAT_PATH` 为兼容保留：接入 BlockRun 官方 TypeScript SDK 后不再依赖该字段，但当前仍建议保留配置以便回滚
+- 免费模型清单会随 BlockRun 更新而变化，请定期通过 `/api/v1/models` 接口核实
 
 调度：
 - `BRNOO_BASE_INTERVAL_SECONDS`：可选，每轮调度间隔（默认 60）

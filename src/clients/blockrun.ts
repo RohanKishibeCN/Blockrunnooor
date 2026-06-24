@@ -292,6 +292,13 @@ function safeErrorMessage(response: unknown, fallback: string): string {
     const r = response as Record<string, unknown>
     const msg = r.error ?? r.message
     if (typeof msg === "string" && msg) return msg.slice(0, 200)
+    if (msg && typeof msg === "object") {
+      const inner = msg as Record<string, unknown>
+      const detail = inner.message ?? inner.detail ?? inner.error ?? inner.code ?? inner.reason
+      if (typeof detail === "string" && detail) return detail.slice(0, 200)
+      const str = JSON.stringify(msg)
+      if (str.length > 2) return str.slice(0, 200)
+    }
   }
   return (fallback || "error").slice(0, 200)
 }
