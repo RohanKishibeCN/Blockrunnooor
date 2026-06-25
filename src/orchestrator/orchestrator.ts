@@ -154,7 +154,9 @@ export class Orchestrator {
           const wallet = this.repo.refreshDailySpentIfNeeded(account.account_id, walletId, day)
           if (!wallet) continue
 
-          const earliest = wallet.last_run_at > 0 ? wallet.last_run_at + baseInterval : tickStart
+          const earliest = wallet.last_run_at > 0
+            ? wallet.last_run_at + baseInterval
+            : tickStart - baseInterval
           const baseBucket = scheduledBucket(earliest, baseInterval)
           const jitter = stableJitter(`${account.account_id}|${walletId}|${baseBucket}`, jitterMax)
           const scheduledAt = earliest + jitter

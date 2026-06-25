@@ -122,26 +122,43 @@ if (item.attempt + 1 >= MAX_OUTBOX_ATTEMPTS) {
 
 ---
 
-### 2.4 🔴 `last_run_at` 被乐观更新，可能导致调度错位
+### 2.4 🔴 `last_run_at` 为 0 的新钱包永远无法被调度（首次调度死锁） ✅ 已修复
 
-**位置：** [src/orchestrator/orchestrator.ts](file:///Users/lei/VibeCoding/TRAE-SOLO/Blockrunnooor/src/orchestrator/orchestrator.ts#L176)
+**位置：** [src/orchestrator/orchestrator.ts](file:///Users/lei/VibeCoding/TRAE-SOLO/Blockrunnooor/src/orchestrator/orchestrator.ts#L157-L161)
+
+**原问题：**
+```typescript
+const earliest = wallet.last_run_at > 0 ? wallet.last_run_at + baseInterval : tickStart
+```
+
+当钱包从未运行过（`last_run_at = 0`）且 `jitterMax` 较大时：
+- `earliest = tickStart`
+- `scheduledAt = tickStart + jitter > tickStart` → 永远 skip
+- `touchWalletLastRun` 在 check 通过后才调用，所以 `last_run_at` 永远保持为 0
+- 导致该钱包**永远无法完成首次调度**
+
+这是组合参数导致的问题：`baseInterval=86400` + `jitterMax=82800` 时，jitter 几乎总是 > 0，完美避开了 check。
+
+**已实施的修复：**
+```typescript
+const earliest = wallet.last_run_at > 0
+  ? wallet.last_run_at + baseInterval
+  : tickStart - baseInterval
+```
+
+对于未运行的钱包，将"基准时间"设为 `tickStart - baseInterval`，这样 `scheduledAt = tickStart - baseInterval + jitter`。由于 `jitterMax < baseInterval`，`scheduledAt` 始终 < `tickStart`，钱包正常通过并行队列上限执行。
+
+**影响：** 100 个未运行钱包约 50 分钟内完成首次调度（每 tick 2 个）。
+
+### 2.5 🟡 `touchWalletLastRun` 被乐观更新（第 2.4 条的延续）
+
+**位置：** [src/orchestrator/orchestrator.ts](file:///Users/lei/VibeCoding/TRAE-SOLO/Blockrunnooor/src/orchestrator/orchestrator.ts#L175)
 
 **问题描述：**
-在 `scheduleLoop()` 中，`touchWalletLastRun` 在 `runOnce` 被调用之前执行（第176行）。这意味着：
-
-- 即使 run 因为并发限制被跳过（`walletsRunning` 检查），`last_run_at` 已经被更新
-- 即使 runOnce 内部因为 `decide() === "deny"` 而立即返回，`last_run_at` 也被更新了
-- `scheduleLoop` 中更新一次，`runOnce` 失败路径中又更新一次 — 存在冗余更新
+`touchWalletLastRun` 在 `runOnce` 执行之前被调用（scheduleLoop 第 175 行），意味着即使 `runOnce` 内部后续失败（如 `decide() === "deny"` 或 semaphore 等待超时），`last_run_at` 也已经被更新了。这浪费了钱包的 24h 调度窗口。
 
 **修复建议：**
-将 `touchWalletLastRun` 移到 `runOnce` 内部，在 run 实际执行后才更新：
-
-```typescript
-// 在 scheduleLoop 中删除：
-// this.repo.touchWalletLastRun(account.account_id, walletId, tickStart)
-
-// 在 runOnce 中，各种 exit path 统一调用
-```
+将 `touchWalletLastRun` 移到 `runOnce` 内部，在 run 实际执行后才更新。
 
 ---
 
@@ -668,37 +685,38 @@ export class StateRepo {
 | 1 | Wallets 表主键改为 `(account_id, wallet_id)` | 多账号数据隔离 | 中等（需迁移脚本） | 待实施 |
 | 2 | `max_cost_per_run_usd` 未校验 | 资金安全 | 小 | 待实施 |
 | 3 | Notion Outbox 无限重试 | 资源泄露 | 小 | 待实施 |
-| 4 | `last_run_at` 乐观更新 | 调度不准 | 小 | 待实施 |
-| 5 | 调度循环无异常保护 | 稳定性 | 小 | 待实施 |
-| 6 | `BRNOO_LOG_LEVEL` 未生效 | 安全和磁盘 | 小 | 待实施 |
+| 4 | `last_run_at=0` 新钱包首次调度死锁 | 部分钱包永不运行 | 小 | ✅ 已修复 |
+| 5 | `touchWalletLastRun` 乐观更新 | 调度窗口浪费 | 小 | 待实施 |
+| 6 | 调度循环无异常保护 | 稳定性 | 小 | 待实施 |
+| 7 | `BRNOO_LOG_LEVEL` 未生效 | 安全和磁盘 | 小 | 待实施 |
 
 ### 🟡 中优先级（建议纳入下个迭代）
 
 | # | 问题 | 影响 | 工作量 | 状态 |
 |---|------|------|--------|------|
-| 7 | Kimi K2.6 fallback 实现 | 业务连续性 | 大 | 待实施 |
-| 8 | 优雅关闭（graceful shutdown） | 数据完整性 | 中等 | 待实施 |
-| 9 | 熔断器完善（half-open 状态） | 恢复速度 | 中等 | 待实施 |
-| 10 | `BlockRunClient` 重复代码消除 | 维护性 | 小 | 待实施 |
-| 11 | Manifest/Prompt Bank 文件缓存 | 性能 | 小 | 待实施 |
-| 12 | SQLite 预编译语句缓存 | 性能 | 小 | 待实施 |
-| 13 | 健康检查端点 | 可观测性 | 小 | 待实施 |
-| 14 | `ecosystem.config.cjs` cwd 修正 | 部署可靠性 | 小 | 待实施 |
+| 8 | Kimi K2.6 fallback 实现 | 业务连续性 | 大 | 待实施 |
+| 9 | 优雅关闭（graceful shutdown） | 数据完整性 | 中等 | 待实施 |
+| 10 | 熔断器完善（half-open 状态） | 恢复速度 | 中等 | 待实施 |
+| 11 | `BlockRunClient` 重复代码消除 | 维护性 | 小 | 待实施 |
+| 12 | Manifest/Prompt Bank 文件缓存 | 性能 | 小 | 待实施 |
+| 13 | SQLite 预编译语句缓存 | 性能 | 小 | 待实施 |
+| 14 | 健康检查端点 | 可观测性 | 小 | 待实施 |
+| 15 | `ecosystem.config.cjs` cwd 修正 | 部署可靠性 | 小 | 待实施 |
 
 ### 🟢 低优先级（改进建议）
 
 | # | 问题 | 影响 | 工作量 | 状态 |
 |---|------|------|--------|------|
-| 15 | 添加单元测试和集成测试 | 质量保障 | 大 | 待实施 |
-| 16 | Notion outbox 版本/attempt 比较 | 数据一致性 | 小 | 待实施 |
-| 17 | 周期性聚合指标日志 | 运维效率 | 小 | 待实施 |
-| 18 | 消除 `as any` 类型断言 | 类型安全 | 小 | ✅ 已实施 |
-| 19 | `notion/runs.ts` executor_host 缺失 | 数据完整性 | 小 | ✅ 已实施 |
-| 20 | `generate-wallets.ts` 安全增强 | 安全 | 小 | 待实施 |
-| 21 | TaskKind 对齐 BlockRun 官方 API 分类 | 业务准确性 | 中等 | ✅ 已实施 |
-| 22 | `safeErrorMessage` 丢失嵌套错误详情 | 排障能力 | 小 | ✅ 已实施 |
-| 23 | BlockRun API 调用失败时无请求日志 | 排障能力 | 小 | ✅ 已实施 |
-| 24 | Prompt Bank / 配置文档过时（旧 kind、旧模型名） | 运维准确性 | 小 | ✅ 已实施 |
+| 16 | 添加单元测试和集成测试 | 质量保障 | 大 | 待实施 |
+| 17 | Notion outbox 版本/attempt 比较 | 数据一致性 | 小 | 待实施 |
+| 18 | 周期性聚合指标日志 | 运维效率 | 小 | 待实施 |
+| 19 | 消除 `as any` 类型断言 | 类型安全 | 小 | ✅ 已实施 |
+| 20 | `notion/runs.ts` executor_host 缺失 | 数据完整性 | 小 | ✅ 已实施 |
+| 21 | `generate-wallets.ts` 安全增强 | 安全 | 小 | 待实施 |
+| 22 | TaskKind 对齐 BlockRun 官方 API 分类 | 业务准确性 | 中等 | ✅ 已实施 |
+| 23 | `safeErrorMessage` 丢失嵌套错误详情 | 排障能力 | 小 | ✅ 已实施 |
+| 24 | BlockRun API 调用失败时无请求日志 | 排障能力 | 小 | ✅ 已实施 |
+| 25 | Prompt Bank / 配置文档过时（旧 kind、旧模型名） | 运维准确性 | 小 | ✅ 已实施 |
 
 ---
 
@@ -817,4 +835,17 @@ index.ts
   docs/10-config-reference.md     ← 模型名称 + 权重示例
   review-optimization-plan.md     ← 本文件
 ```
+
+---
+
+### G. 钱包首次调度死锁修复
+
+**根因分析：** `scheduleLoop` 中 `earliest = wallet.last_run_at > 0 ? ... : tickStart` 对于新钱包（`last_run_at=0`），`earliest = tickStart`，`scheduledAt = tickStart + jitter > tickStart` 永远成立（jitter 几乎总是 > 0），导致从未运行过的钱包永远无法通过调度检查，陷入死锁。只有已运行过的钱包（有 `last_run_at` 历史记录）才能正常工作。
+
+**触发条件：** `jitterMax` 接近 `baseInterval` 时问题确定性触发。用户环境 `baseInterval=86400`、`jitterMax=82800` 正是这种情况。
+
+**已修改文件：**
+- [src/orchestrator/orchestrator.ts](file:///Users/lei/VibeCoding/TRAE-SOLO/Blockrunnooor/src/orchestrator/orchestrator.ts#L157-L161) — 将 `tickStart` 改为 `tickStart - baseInterval`，使新钱包的调度时间落在过去（`scheduledAt < tickStart`），正常通过检查
+
+**影响范围：** 所有新添加的未运行钱包，修复后约 50 分钟完成首次调度（100 钱包 × `maxQueue=2` 每 tick × 60s tick 间隔）。
 
