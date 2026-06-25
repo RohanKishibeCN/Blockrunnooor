@@ -42,6 +42,14 @@ type PlannedTask =
       body?: Record<string, unknown>
     }
 
+const API_PREFIX = "/api"
+
+function resolveApiPath(requestedPath: string): string {
+  if (requestedPath.startsWith(`${API_PREFIX}/`)) return requestedPath
+  if (requestedPath.startsWith("/")) return `${API_PREFIX}${requestedPath}`
+  return `${API_PREFIX}/${requestedPath}`
+}
+
 export class Orchestrator {
   private running = true
 
@@ -240,9 +248,9 @@ export class Orchestrator {
         if (typeof task.temperature === "number") payload.temperature = task.temperature
         if (typeof task.max_tokens === "number") payload.max_tokens = task.max_tokens
       } else {
-        path = task.path
+        path = resolveApiPath(task.path)
         payload.method = task.method
-        payload.path = task.path
+        payload.path = path
         payload.params = task.params
         payload.body = task.body
         payload.label = `${task.kind}:${task.path}`
