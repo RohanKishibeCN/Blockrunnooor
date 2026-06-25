@@ -1,4 +1,3 @@
-import os from "node:os"
 import type { ExecutorOutput } from "../types.js"
 
 function title(s: string): Record<string, unknown> {
@@ -21,17 +20,6 @@ function date(iso: string): Record<string, unknown> {
   return { date: { start: iso } }
 }
 
-function hostname(): string {
-  return os.hostname()
-}
-
-let cachedHostname: string | null = null
-
-function getHostname(): string {
-  if (!cachedHostname) cachedHostname = hostname()
-  return cachedHostname
-}
-
 export function buildRunProperties(out: ExecutorOutput, orchestratorVersion: string): Record<string, unknown> {
   const props: Record<string, unknown> = {
     run_id: title(out.run_id),
@@ -45,8 +33,7 @@ export function buildRunProperties(out: ExecutorOutput, orchestratorVersion: str
     channel: select(out.channel),
     status: select(out.status),
     latency_ms: number(out.latency_ms),
-    orchestrator_version: richText(orchestratorVersion),
-    executor_host: richText(getHostname())
+    orchestrator_version: richText(orchestratorVersion)
   }
   if (out.wallet_address) props.wallet_address = richText(out.wallet_address)
   if (out.gateway) props.gateway = richText(out.gateway)
